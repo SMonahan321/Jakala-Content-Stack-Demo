@@ -15,7 +15,7 @@
  *
  * Two implementations are provided and selected via `REASONING_PROVIDER`:
  *   - `aisdk` (DEFAULT) — runs the reasoning in-process with the Vercel AI SDK
- *     (`ai` + `@ai-sdk/openai`). Safe to build and run; this is the working fallback.
+ *     using AI Gateway model strings (e.g. "openai/gpt-4o"). Safe to build and run; this is the working fallback.
  *   - `eve`             — a thin HTTP client that triggers a deployed eve agent. The
  *     exact request/response envelope is a TODO because it depends on how the eve
  *     agent's HTTP channel is authored (see notes on `EveReasoningService`).
@@ -25,7 +25,6 @@
  */
 
 import { generateObject } from "ai";
-import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 
 import { BRAND_KIT, requiredDisclaimer } from "./brandkit";
@@ -172,18 +171,18 @@ function buildFactCheckPrompt(
 }
 
 function resolveModel() {
-  // Provider-agnostic by design: swap this line to change providers.
-  // e.g. `import { anthropic } from "@ai-sdk/anthropic"` then `anthropic(modelId)`.
-  const modelId = process.env.AI_MODEL || "gpt-4o";
-  return openai(modelId);
+  // Provider-agnostic by design: swap this line to change providers via AI Gateway.
+  // e.g. "anthropic/claude-sonnet-4" or "openai/gpt-4o".
+  const modelId = process.env.AI_MODEL || "openai/gpt-4o";
+  return modelId;
 }
 
 /* ── AI SDK implementation (the in-process fallback + default) ────────────── */
 
 /**
- * Runs the deep reasoning in-process via the Vercel AI SDK. Requires a provider key
- * (`OPENAI_API_KEY`) at RUNTIME only — the project still builds/typechecks without it
- * because reasoning is only invoked from the webhook pipeline.
+ * Runs the deep reasoning in-process via the Vercel AI SDK with AI Gateway model strings.
+ * Requires a provider key (e.g. `OPENAI_API_KEY`) at RUNTIME only — the project still
+ * builds/typechecks without it because reasoning is only invoked from the webhook pipeline.
  */
 export class AiSdkReasoningService implements ReasoningService {
   readonly name = "aisdk";
