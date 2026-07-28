@@ -1,0 +1,29 @@
+{
+  "name": "one-post-shared-everywhere",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI agent that transcreates a single Contentstack blog post into per-channel, per-locale social variants with brand + healthcare compliance guardrails and a human review gate.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.20",
+    "@contentstack/management": "^1.30.4",
+    "@slack/web-api": "^8.0.0",
+    "ai": "^7.0.37",
+    "next": "^16.2.11",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "5.9.3"
+  }
+}

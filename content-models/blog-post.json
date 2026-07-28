@@ -1,0 +1,47 @@
+{
+  "content_type": {
+    "title": "Blog Post",
+    "uid": "blog_post",
+    "description": "Source article authored by a human. System of record for a campaign.",
+    "options": {
+      "is_page": false,
+      "singleton": false,
+      "title": "title",
+      "sub_title": []
+    },
+    "schema": [
+      {
+        "display_name": "Title",
+        "uid": "title",
+        "data_type": "text",
+        "mandatory": true,
+        "unique": true,
+        "field_metadata": { "_default": true }
+      },
+      {
+        "display_name": "Summary",
+        "uid": "summary",
+        "data_type": "text",
+        "mandatory": false,
+        "field_metadata": { "description": "Short dek / social-ready summary." }
+      },
+      {
+        "display_name": "Body",
+        "uid": "body",
+        "data_type": "text",
+        "mandatory": true,
+        "field_metadata": { "multiline": true, "description": "Full source article body." }
+      },
+      {
+        "display_name": "Key Claims",
+        "uid": "key_claims",
+        "data_type": "text",
+        "multiple": true,
+        "mandatory": false,
+        "field_metadata": {
+          "description": "Author-declared, source-of-truth medical claims used by the Fact-Checker."
+        }
+      }
+    ]
+  }
+}

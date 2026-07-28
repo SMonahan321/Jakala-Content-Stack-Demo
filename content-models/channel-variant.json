@@ -1,0 +1,94 @@
+{
+  "content_type": {
+    "title": "Channel Variant",
+    "uid": "channel_variant",
+    "description": "AI-generated, per-channel social variant referenced back to a Blog Post. Localized across en/es/fr.",
+    "options": {
+      "is_page": false,
+      "singleton": false,
+      "title": "title",
+      "sub_title": []
+    },
+    "schema": [
+      {
+        "display_name": "Title",
+        "uid": "title",
+        "data_type": "text",
+        "mandatory": true,
+        "unique": false,
+        "field_metadata": { "_default": true, "description": "Internal label, e.g. 'linkedin · en · <blog uid>'." }
+      },
+      {
+        "display_name": "Channel",
+        "uid": "channel",
+        "data_type": "text",
+        "mandatory": true,
+        "display_type": "dropdown",
+        "enum": {
+          "advanced": false,
+          "choices": [
+            { "value": "linkedin" },
+            { "value": "x" },
+            { "value": "instagram" }
+          ]
+        },
+        "field_metadata": { "description": "Target social channel." }
+      },
+      {
+        "display_name": "Formatted Text",
+        "uid": "formatted_text",
+        "data_type": "text",
+        "mandatory": true,
+        "field_metadata": { "multiline": true, "description": "Transcreated, channel-ready copy (localized)." }
+      },
+      {
+        "display_name": "Hashtags",
+        "uid": "hashtags",
+        "data_type": "text",
+        "multiple": true,
+        "mandatory": false,
+        "field_metadata": { "description": "Hashtags without the leading # symbol." }
+      },
+      {
+        "display_name": "Character Count",
+        "uid": "char_count",
+        "data_type": "number",
+        "mandatory": false,
+        "field_metadata": { "description": "Length of formatted_text; helps channel limit checks." }
+      },
+      {
+        "display_name": "Image Crop Spec",
+        "uid": "image_crop_spec",
+        "data_type": "text",
+        "mandatory": false,
+        "field_metadata": { "multiline": true, "description": "JSON crop spec (aspectRatio/width/height/note)." }
+      },
+      {
+        "display_name": "Status",
+        "uid": "status",
+        "data_type": "text",
+        "mandatory": true,
+        "display_type": "dropdown",
+        "enum": {
+          "advanced": false,
+          "choices": [
+            { "value": "generated" },
+            { "value": "needs_review" },
+            { "value": "flagged" },
+            { "value": "approved" },
+            { "value": "published" }
+          ]
+        },
+        "field_metadata": { "description": "Lifecycle status; 'flagged' means fact-check failed." }
+      },
+      {
+        "display_name": "Source Blog",
+        "uid": "source_blog",
+        "data_type": "reference",
+        "mandatory": true,
+        "reference_to": ["blog_post"],
+        "field_metadata": { "ref_multiple": false, "description": "Reference back to the source Blog Post." }
+      }
+    ]
+  }
+}
