@@ -16,6 +16,7 @@
     "seed:blog": "tsx scripts/seed-blog-post.ts",
     "seed:lyme": "tsx scripts/seed-lyme-post.ts",
     "seed:burnout": "tsx scripts/seed-burnout-post.ts",
+    "seed:baddemo": "tsx scripts/seed-bad-demo-post.ts",
     "run:pipeline": "tsx scripts/run-pipeline.ts",
     "cleanup:variants": "tsx scripts/cleanup-variants.ts"
   },
