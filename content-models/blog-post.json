@@ -55,7 +55,7 @@
         }
       },
       {
-        "display_name": "Demo: Bypass Compliance",
+        "display_name": "Bypass Compliance",
         "uid": "demo_bypass_compliance",
         "data_type": "boolean",
         "mandatory": false,
