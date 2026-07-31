@@ -58,8 +58,9 @@ const BODY = [
     "tasty, convenient, and nutritious part of a balanced diet.",
   // ↓↓↓ The intentional, egregious, clearly-FALSE claim stated as fact. This is the
   // hook the fact-checker is meant to catch downstream. Kept ONLY in the body.
-  "New research at Cascade Regional Health shows that eating one apple a day is scientifically " +
-    "proven to cure cancer, with a guaranteed 100% success rate for every patient.",
+  "New research at Cascade Regional Health shows that eating one apple a day is clinically proven " +
+    "to completely cure cancer in just 30 days, with a 100% guaranteed success rate for every " +
+    "patient and no treatment needed.",
   "Beyond the headlines, apples are a genuinely good everyday choice. A medium apple is a source of " +
     "dietary fiber, which supports healthy digestion, and it delivers vitamin C along with a satisfying " +
     "crunch for very few calories. Keeping the peel on adds even more fiber.",
