@@ -17,6 +17,7 @@ import type {
   BlogPost,
   Channel,
   ChannelVariant,
+  FactCheckResult,
   ImageCropSpec,
   Locale,
   VariantStatus,
@@ -322,6 +323,35 @@ function mapVariantEntry(
     imageCropSpec: parseCropSpec(item.image_crop_spec, typedChannel),
     status: (item.status as VariantStatus) ?? "needs_review",
     sourceBlogUid: blogUid,
+    factCheck: mapFactCheck(item),
+  };
+}
+
+/**
+ * Reconstruct the domain `FactCheckResult` from the persisted fact-check fields on a
+ * raw entry (see `toEntryData`). Returns `undefined` when NONE of the four fields are
+ * present (older data written before Option A) so the UI can show an "unchecked"
+ * state rather than a misleading "passed".
+ */
+function mapFactCheck(item: RawVariantEntry): FactCheckResult | undefined {
+  const hasAny =
+    item.fact_check_passed != null ||
+    item.disclaimer_present != null ||
+    item.unsupported_claims != null ||
+    item.fact_check_notes != null;
+  if (!hasAny) return undefined;
+
+  const reasons =
+    typeof item.fact_check_notes === "string"
+      ? item.fact_check_notes.split("\n").map((r) => r.trim()).filter(Boolean)
+      : [];
+  return {
+    pass: Boolean(item.fact_check_passed),
+    disclaimerPresent: Boolean(item.disclaimer_present),
+    unsupportedClaims: Array.isArray(item.unsupported_claims)
+      ? item.unsupported_claims.filter(Boolean)
+      : [],
+    reasons,
   };
 }
 

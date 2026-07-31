@@ -7,7 +7,13 @@ import {
 } from "@/lib/contentstack";
 import { SAMPLE_BLOG, sampleVariantsByChannel } from "@/lib/sample-data";
 import { CHANNELS } from "@/lib/types";
-import type { BlogPost, Channel, ChannelVariant, Locale } from "@/lib/types";
+import type {
+  BlogPost,
+  Channel,
+  ChannelVariant,
+  FactCheckResult,
+  Locale,
+} from "@/lib/types";
 
 /**
  * Never statically prerender: the page reads live Contentstack data at request time
@@ -113,6 +119,7 @@ const CHANNEL_ORDER: Channel[] = ["linkedin", "x", "instagram"];
 export default async function PreviewPage() {
   const { source, blogTitle, featuredImage, byChannel } = await loadPreviewData();
   const heroUrl = featuredImage?.url;
+  const allVariants = CHANNEL_ORDER.flatMap((channel) => byChannel[channel]);
 
   return (
     <main className="container">
@@ -128,6 +135,8 @@ export default async function PreviewPage() {
         each row is a channel and each column is a locale — the 3 × 3 fan-out the agent produces. These
         are mock preview cards (no real posting); only Slack receives a real push after approval.
       </p>
+
+      <FactCheckSummary variants={allVariants} />
 
       <SourceHero image={featuredImage} title={blogTitle} />
 
@@ -146,10 +155,22 @@ export default async function PreviewPage() {
           >
             {byChannel[channel].map((variant) => (
               <div key={`${channel}-${variant.locale}`}>
-                <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 8 }}>
-                  {LOCALE_LABEL[variant.locale]}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    marginBottom: 8,
+                  }}
+                >
+                  <span style={{ color: "var(--muted)", fontSize: 13 }}>
+                    {LOCALE_LABEL[variant.locale]}
+                  </span>
+                  <FactCheckBadge factCheck={variant.factCheck} />
                 </div>
                 <ChannelCard variant={variant} imageUrl={heroUrl} />
+                <FactCheckReasons factCheck={variant.factCheck} />
               </div>
             ))}
           </div>
@@ -193,6 +214,180 @@ function DataSourceBadge({ source }: { source: "live" | "sample" }) {
       {isLive ? "Live data" : "Sample data"}
     </span>
   );
+}
+
+/* ── Fact-check surfacing ────────────────────────────────── */
+
+type FactCheckState = "passed" | "flagged" | "unchecked";
+
+/** Collapse a variant's `factCheck` into one of three render states. */
+function factCheckState(factCheck?: FactCheckResult): FactCheckState {
+  if (!factCheck) return "unchecked";
+  return factCheck.pass ? "passed" : "flagged";
+}
+
+const FACT_CHECK_STYLE: Record<
+  FactCheckState,
+  { label: string; color: string; bg: string; border: string }
+> = {
+  passed: {
+    label: "✓ Passed",
+    color: "#0a7d33",
+    bg: "rgba(16,185,79,0.12)",
+    border: "rgba(16,185,79,0.35)",
+  },
+  flagged: {
+    label: "⚠ Flagged",
+    color: "#c02636",
+    bg: "rgba(224,36,94,0.12)",
+    border: "rgba(224,36,94,0.4)",
+  },
+  unchecked: {
+    label: "— Not checked",
+    color: "var(--muted)",
+    bg: "rgba(148,163,184,0.14)",
+    border: "rgba(148,163,184,0.3)",
+  },
+};
+
+/** Small per-card fact-check verdict badge (passed / flagged / not-checked). */
+function FactCheckBadge({ factCheck }: { factCheck?: FactCheckResult }) {
+  const s = FACT_CHECK_STYLE[factCheckState(factCheck)];
+  return (
+    <span
+      title={
+        factCheck
+          ? factCheck.pass
+            ? "All claims supported and disclaimer present."
+            : "Fact-check flagged this variant."
+          : "This variant has no persisted fact-check result yet."
+      }
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "3px 9px",
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 600,
+        letterSpacing: 0.2,
+        color: s.color,
+        background: s.bg,
+        border: `1px solid ${s.border}`,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {s.label}
+    </span>
+  );
+}
+
+/**
+ * Compact reasons block shown under a card when the variant was flagged. Lists the
+ * fact-check reasons and any unsupported/prohibited claims. Renders nothing when the
+ * variant passed or has no fact-check result.
+ */
+function FactCheckReasons({ factCheck }: { factCheck?: FactCheckResult }) {
+  if (!factCheck || factCheck.pass) return null;
+  const { reasons, unsupportedClaims } = factCheck;
+  if (!reasons.length && !unsupportedClaims.length) return null;
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: "8px 10px",
+        borderRadius: 8,
+        fontSize: 12,
+        lineHeight: 1.45,
+        color: "#8a1a29",
+        background: "rgba(224,36,94,0.08)",
+        border: "1px solid rgba(224,36,94,0.3)",
+      }}
+    >
+      {reasons.length > 0 && (
+        <ul style={{ margin: 0, paddingLeft: 16 }}>
+          {reasons.map((r, i) => (
+            <li key={i}>{r}</li>
+          ))}
+        </ul>
+      )}
+      {unsupportedClaims.length > 0 && (
+        <div style={{ marginTop: reasons.length ? 6 : 0 }}>
+          <strong>Unsupported / prohibited:</strong> {unsupportedClaims.join("; ")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Top-of-page fact-check summary across all rendered variants: pass/flag counts and,
+ * when present, the list of flagged variants as `channel · locale — reason(s)`. Shows
+ * a green all-clear line when everything passed, and notes any unchecked variants.
+ */
+function FactCheckSummary({ variants }: { variants: ChannelVariant[] }) {
+  if (variants.length === 0) return null;
+
+  const flagged = variants.filter((v) => factCheckState(v.factCheck) === "flagged");
+  const passed = variants.filter((v) => factCheckState(v.factCheck) === "passed");
+  const unchecked = variants.filter((v) => factCheckState(v.factCheck) === "unchecked");
+  const hasFlags = flagged.length > 0;
+
+  const counts = [
+    `${passed.length} passed`,
+    `${flagged.length} flagged`,
+    ...(unchecked.length ? [`${unchecked.length} not checked`] : []),
+  ].join(" · ");
+
+  return (
+    <section
+      style={{
+        marginTop: 18,
+        padding: "14px 16px",
+        borderRadius: 12,
+        maxWidth: 760,
+        background: hasFlags ? "rgba(224,36,94,0.06)" : "rgba(16,185,79,0.08)",
+        border: `1px solid ${hasFlags ? "rgba(224,36,94,0.3)" : "rgba(16,185,79,0.3)"}`,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          fontWeight: 700,
+          fontSize: 15,
+          color: hasFlags ? "#c02636" : "#0a7d33",
+        }}
+      >
+        {hasFlags ? "⚠ Fact-check found issues" : "✓ All variants passed fact-check"}
+        <span style={{ fontWeight: 500, fontSize: 13, color: "var(--muted)" }}>{counts}</span>
+      </div>
+
+      {hasFlags && (
+        <ul style={{ margin: "10px 0 0", paddingLeft: 18, fontSize: 13, lineHeight: 1.5 }}>
+          {flagged.map((v) => (
+            <li key={`${v.channel}-${v.locale}`}>
+              <strong>
+                {CHANNEL_META[v.channel].label} · {v.locale}
+              </strong>
+              {" — "}
+              {factCheckReasonText(v.factCheck)}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/** One-line reason summary for a flagged variant (reasons + unsupported claims). */
+function factCheckReasonText(factCheck?: FactCheckResult): string {
+  if (!factCheck) return "Flagged.";
+  const parts = [...factCheck.reasons];
+  if (factCheck.unsupportedClaims.length) {
+    parts.push(`Unsupported: ${factCheck.unsupportedClaims.join("; ")}`);
+  }
+  return parts.length ? parts.join(" ") : "Flagged.";
 }
 
 function ChannelDot({ channel }: { channel: Channel }) {
