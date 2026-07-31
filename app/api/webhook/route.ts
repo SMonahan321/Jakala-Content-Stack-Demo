@@ -14,7 +14,7 @@
  * Designed to typecheck/build without live creds; real work is guarded by config checks.
  */
 
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { buildTargetMatrix } from "@/lib/agent";
 import { isContentstackConfigured } from "@/lib/contentstack";
@@ -65,8 +65,11 @@ export async function POST(req: Request) {
   const entryUid = payload.data?.entry?.uid;
   const stageName = payload.data?.workflow?.workflow_stage?.name;
 
+  // Acknowledge with 200 (not 400) so Contentstack marks the delivery successful
+  // and does NOT retry — a missing uid is unrecoverable, retrying won't help.
   if (!entryUid) {
-    return NextResponse.json({ error: "missing entry uid" }, { status: 400 });
+    console.warn("[webhook] missing entry uid; acknowledging without scheduling.");
+    return NextResponse.json({ accepted: true, scheduled: false, reason: "missing entry uid" });
   }
 
   // Only act on the trigger stage; ignore other workflow events.
@@ -85,14 +88,17 @@ export async function POST(req: Request) {
     });
   }
 
-  try {
-    const result = await runPipeline(entryUid);
-    return NextResponse.json({ accepted: true, processed: true, ...result });
-  } catch (err) {
-    console.error("[webhook] pipeline error", err);
-    return NextResponse.json(
-      { accepted: true, processed: false, error: (err as Error).message },
-      { status: 500 },
-    );
-  }
+  // Contentstack's webhook client times out long before the ~75s pipeline finishes,
+  // which previously caused failed deliveries, retry storms (duplicate variants), and
+  // eventual auto-disabling of the webhook. Respond immediately and run the pipeline
+  // AFTER the response is sent (post-response work is bounded by maxDuration=300s).
+  after(async () => {
+    try {
+      await runPipeline(entryUid);
+    } catch (err) {
+      console.error("[webhook] background pipeline error", err);
+    }
+  });
+
+  return NextResponse.json({ accepted: true, scheduled: true, entryUid });
 }
