@@ -34,9 +34,10 @@ export interface BlogPost {
   keyClaims?: string[];
   /**
    * Optional hero image. Mirrors how a Contentstack file/asset field comes back
-   * from the SDK — a single asset with a `uid` (and a resolved `url` when populated).
+   * from the SDK — a single asset with a `uid`, plus the resolved `url`/`title`
+   * once the asset is populated (see `mapFeaturedImage`/`getBlogPost`).
    */
-  featuredImage?: { uid: string; url?: string };
+  featuredImage?: { uid: string; url?: string; title?: string };
 }
 
 /** Spec for how a channel wants its hero image cropped (mock — no real image ops). */

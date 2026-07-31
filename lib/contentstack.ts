@@ -94,6 +94,12 @@ function getStack() {
 /**
  * Fetch the source Blog Post entry (in a given locale, default English).
  * Maps the raw Contentstack entry onto our domain `BlogPost` type.
+ *
+ * The `featured_image` file field comes back from the Management SDK as a fully
+ * resolved asset object (with `url`/`title`) on a plain fetch — a `file` field is
+ * NOT a reference, so an `include[]=featured_image` param is rejected (422). As a
+ * safety net for stacks/SDKs that return only the bare asset uid, we resolve the
+ * asset by uid so `/preview` always gets a usable image URL.
  */
 export async function getBlogPost(uid: string, locale: Locale = "en"): Promise<BlogPost> {
   const stack = getStack();
@@ -104,6 +110,12 @@ export async function getBlogPost(uid: string, locale: Locale = "en"): Promise<B
     .entry(uid)
     .fetch({ locale: stackLocale })) as unknown as RawBlogEntry;
 
+  let featuredImage = mapFeaturedImage(entry.featured_image);
+  // If the field resolved to only a uid (no url), fetch the asset to get its url.
+  if (featuredImage && !featuredImage.url) {
+    featuredImage = (await resolveAsset(featuredImage.uid)) ?? featuredImage;
+  }
+
   return {
     uid,
     locale,
@@ -111,22 +123,44 @@ export async function getBlogPost(uid: string, locale: Locale = "en"): Promise<B
     body: entry.body ?? "",
     summary: entry.summary,
     keyClaims: entry.key_claims,
-    featuredImage: mapFeaturedImage(entry.featured_image),
+    featuredImage,
   };
 }
 
 /**
  * Normalize a Contentstack file/asset field into our optional `featuredImage`.
- * A single file field comes back either as the asset `uid` string (default) or as
- * a resolved asset object (when the fetch used `include[]`). Absent → undefined.
+ * A single file field comes back either as the asset `uid` string or as a resolved
+ * asset object carrying `url`/`title`. Absent → undefined.
  */
 function mapFeaturedImage(
-  raw: string | { uid?: string; url?: string } | null | undefined,
-): { uid: string; url?: string } | undefined {
+  raw: string | { uid?: string; url?: string; title?: string } | null | undefined,
+): { uid: string; url?: string; title?: string } | undefined {
   if (!raw) return undefined;
   if (typeof raw === "string") return { uid: raw };
-  if (raw.uid) return { uid: raw.uid, url: raw.url };
+  if (raw.uid) return { uid: raw.uid, url: raw.url, title: raw.title };
   return undefined;
+}
+
+/**
+ * Resolve a Contentstack asset by uid into `{ uid, url, title }`. Best-effort:
+ * returns `undefined` if the asset can't be fetched, so callers keep whatever
+ * uid-only value they already had.
+ */
+async function resolveAsset(
+  uid: string,
+): Promise<{ uid: string; url?: string; title?: string } | undefined> {
+  try {
+    const stack = getStack();
+    const asset = (await stack.asset(uid).fetch()) as unknown as {
+      uid?: string;
+      url?: string;
+      title?: string;
+    };
+    if (!asset?.url) return undefined;
+    return { uid: asset.uid ?? uid, url: asset.url, title: asset.title };
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -537,8 +571,8 @@ interface RawBlogEntry {
   body?: string;
   summary?: string;
   key_claims?: string[];
-  /** File field: asset uid string by default, or a resolved asset object with `include[]`. */
-  featured_image?: string | { uid?: string; url?: string } | null;
+  /** File field: a resolved asset object (with `url`/`title`) or a bare asset uid. */
+  featured_image?: string | { uid?: string; url?: string; title?: string } | null;
 }
 
 /** An entry handle we can mutate + update (subset of the SDK Entry). */

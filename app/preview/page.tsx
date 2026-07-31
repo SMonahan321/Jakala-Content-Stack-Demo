@@ -1,9 +1,13 @@
 import Link from "next/link";
 
-import { getChannelVariantsForBlog, getLatestBlogWithVariants } from "@/lib/contentstack";
+import {
+  getBlogPost,
+  getChannelVariantsForBlog,
+  getLatestBlogWithVariants,
+} from "@/lib/contentstack";
 import { SAMPLE_BLOG, sampleVariantsByChannel } from "@/lib/sample-data";
 import { CHANNELS } from "@/lib/types";
-import type { Channel, ChannelVariant, Locale } from "@/lib/types";
+import type { BlogPost, Channel, ChannelVariant, Locale } from "@/lib/types";
 
 /**
  * Never statically prerender: the page reads live Contentstack data at request time
@@ -22,6 +26,8 @@ const BLOG_ENTRY_UID_OVERRIDE = process.env.BLOG_ENTRY_UID;
 type PreviewData = {
   source: "live" | "sample";
   blogTitle: string;
+  /** Resolved source-blog hero image (live or sample fallback). */
+  featuredImage?: BlogPost["featuredImage"];
   byChannel: Record<Channel, ChannelVariant[]>;
 };
 
@@ -56,9 +62,18 @@ async function loadPreviewData(): Promise<PreviewData> {
     if (blogUid) {
       const variants = await getChannelVariantsForBlog(blogUid);
       if (variants.length > 0) {
+        // Fetch the source blog to resolve its title + featured image (hero).
+        // Non-fatal: a failure here still renders the variants without a hero.
+        let blog: BlogPost | null = null;
+        try {
+          blog = await getBlogPost(blogUid);
+        } catch {
+          blog = null;
+        }
         return {
           source: "live",
-          blogTitle: `Live entry ${blogUid}`,
+          blogTitle: blog?.title ?? `Live entry ${blogUid}`,
+          featuredImage: blog?.featuredImage,
           byChannel: groupByChannel(variants),
         };
       }
@@ -69,6 +84,7 @@ async function loadPreviewData(): Promise<PreviewData> {
   return {
     source: "sample",
     blogTitle: SAMPLE_BLOG.title,
+    featuredImage: SAMPLE_BLOG.featuredImage,
     byChannel: sampleVariantsByChannel(),
   };
 }
@@ -95,7 +111,8 @@ const LOCALE_LABEL: Record<Locale, string> = {
 const CHANNEL_ORDER: Channel[] = ["linkedin", "x", "instagram"];
 
 export default async function PreviewPage() {
-  const { source, blogTitle, byChannel } = await loadPreviewData();
+  const { source, blogTitle, featuredImage, byChannel } = await loadPreviewData();
+  const heroUrl = featuredImage?.url;
 
   return (
     <main className="container">
@@ -111,6 +128,8 @@ export default async function PreviewPage() {
         each row is a channel and each column is a locale — the 3 × 3 fan-out the agent produces. These
         are mock preview cards (no real posting); only Slack receives a real push after approval.
       </p>
+
+      <SourceHero image={featuredImage} title={blogTitle} />
 
       {CHANNEL_ORDER.map((channel) => (
         <section key={channel} style={{ marginTop: 36 }}>
@@ -130,7 +149,7 @@ export default async function PreviewPage() {
                 <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 8 }}>
                   {LOCALE_LABEL[variant.locale]}
                 </div>
-                <ChannelCard variant={variant} />
+                <ChannelCard variant={variant} imageUrl={heroUrl} />
               </div>
             ))}
           </div>
@@ -198,15 +217,56 @@ function ChannelDot({ channel }: { channel: Channel }) {
   );
 }
 
-function ChannelCard({ variant }: { variant: ChannelVariant }) {
+function ChannelCard({ variant, imageUrl }: { variant: ChannelVariant; imageUrl?: string }) {
   switch (variant.channel) {
     case "linkedin":
-      return <LinkedInCard variant={variant} />;
+      return <LinkedInCard variant={variant} imageUrl={imageUrl} />;
     case "x":
-      return <XCard variant={variant} />;
+      return <XCard variant={variant} imageUrl={imageUrl} />;
     case "instagram":
-      return <InstagramCard variant={variant} />;
+      return <InstagramCard variant={variant} imageUrl={imageUrl} />;
   }
+}
+
+/**
+ * Shared source-blog hero: renders the resolved featured image once above the
+ * channel grid. Falls back to the crop-spec placeholder when no image resolved.
+ * Plain <img> (not next/image) so no remote-domain allowlist is required.
+ */
+function SourceHero({
+  image,
+  title,
+}: {
+  image?: BlogPost["featuredImage"];
+  title: string;
+}) {
+  if (!image?.url) return null;
+  return (
+    <figure
+      style={{
+        margin: "22px 0 4px",
+        borderRadius: 12,
+        overflow: "hidden",
+        border: "1px solid var(--border, #e0e0e0)",
+        maxWidth: 760,
+      }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={image.url}
+        alt={image.title ?? title}
+        style={{
+          display: "block",
+          width: "100%",
+          maxHeight: 320,
+          objectFit: "cover",
+        }}
+      />
+      <figcaption style={{ color: "var(--muted)", fontSize: 12, padding: "8px 12px" }}>
+        Source featured image{image.title ? ` · ${image.title}` : ""}
+      </figcaption>
+    </figure>
+  );
 }
 
 /* ── Shared bits ─────────────────────────────────────────── */
@@ -240,6 +300,31 @@ function ImagePlaceholder({ label, ratio }: { label: string; ratio: string }) {
   );
 }
 
+/**
+ * Card image slot: renders the resolved source featured image (cropped to the
+ * channel's aspect ratio via object-fit) when a URL is available, otherwise falls
+ * back to the crop-spec placeholder. Plain <img> keeps next.config domain-free.
+ */
+function ImageSlot({
+  imageUrl,
+  label,
+  ratio,
+}: {
+  imageUrl?: string;
+  label: string;
+  ratio: string;
+}) {
+  if (!imageUrl) return <ImagePlaceholder label={label} ratio={ratio} />;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={imageUrl}
+      alt={label}
+      style={{ display: "block", width: "100%", aspectRatio: ratio, objectFit: "cover" }}
+    />
+  );
+}
+
 function CharCount({ count, limit }: { count: number; limit?: number }) {
   const over = limit ? count > limit : false;
   return (
@@ -252,7 +337,7 @@ function CharCount({ count, limit }: { count: number; limit?: number }) {
 
 /* ── LinkedIn ────────────────────────────────────────────── */
 
-function LinkedInCard({ variant }: { variant: ChannelVariant }) {
+function LinkedInCard({ variant, imageUrl }: { variant: ChannelVariant; imageUrl?: string }) {
   return (
     <div
       style={{
@@ -288,7 +373,11 @@ function LinkedInCard({ variant }: { variant: ChannelVariant }) {
         {variant.formattedText}
         <Hashtags tags={variant.hashtags} color="#0a66c2" />
       </div>
-      <ImagePlaceholder label={`Hero · ${variant.imageCropSpec.aspectRatio}`} ratio="1200 / 627" />
+      <ImageSlot
+        imageUrl={imageUrl}
+        label={`Hero · ${variant.imageCropSpec.aspectRatio}`}
+        ratio="1200 / 627"
+      />
       <div
         style={{
           display: "flex",
@@ -308,7 +397,7 @@ function LinkedInCard({ variant }: { variant: ChannelVariant }) {
 
 /* ── X / Twitter ─────────────────────────────────────────── */
 
-function XCard({ variant }: { variant: ChannelVariant }) {
+function XCard({ variant, imageUrl }: { variant: ChannelVariant; imageUrl?: string }) {
   return (
     <div
       style={{
@@ -339,7 +428,11 @@ function XCard({ variant }: { variant: ChannelVariant }) {
             <Hashtags tags={variant.hashtags} color="#1d9bf0" />
           </div>
           <div style={{ marginTop: 10, borderRadius: 14, overflow: "hidden" }}>
-            <ImagePlaceholder label={`Media · ${variant.imageCropSpec.aspectRatio}`} ratio="16 / 9" />
+            <ImageSlot
+              imageUrl={imageUrl}
+              label={`Media · ${variant.imageCropSpec.aspectRatio}`}
+              ratio="16 / 9"
+            />
           </div>
           <div
             style={{
@@ -361,7 +454,7 @@ function XCard({ variant }: { variant: ChannelVariant }) {
 
 /* ── Instagram ───────────────────────────────────────────── */
 
-function InstagramCard({ variant }: { variant: ChannelVariant }) {
+function InstagramCard({ variant, imageUrl }: { variant: ChannelVariant; imageUrl?: string }) {
   return (
     <div
       style={{
@@ -386,7 +479,11 @@ function InstagramCard({ variant }: { variant: ChannelVariant }) {
         </div>
         <div style={{ fontWeight: 600, fontSize: 13 }}>cascaderegionalhealth</div>
       </div>
-      <ImagePlaceholder label={`Photo · ${variant.imageCropSpec.aspectRatio}`} ratio="4 / 5" />
+      <ImageSlot
+        imageUrl={imageUrl}
+        label={`Photo · ${variant.imageCropSpec.aspectRatio}`}
+        ratio="4 / 5"
+      />
       <div style={{ padding: "8px 10px", display: "flex", gap: 12, fontSize: 18 }}>
         <span>♡</span>
         <span>💬</span>
