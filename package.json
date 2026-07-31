@@ -15,6 +15,7 @@
     "sync:webhook": "tsx scripts/sync-webhook.ts",
     "seed:blog": "tsx scripts/seed-blog-post.ts",
     "seed:lyme": "tsx scripts/seed-lyme-post.ts",
+    "seed:burnout": "tsx scripts/seed-burnout-post.ts",
     "run:pipeline": "tsx scripts/run-pipeline.ts",
     "cleanup:variants": "tsx scripts/cleanup-variants.ts"
   },
