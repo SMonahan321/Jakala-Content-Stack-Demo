@@ -32,6 +32,11 @@ export interface BlogPost {
   summary?: string;
   /** Author-declared, source-of-truth medical claims (used by the fact-checker). */
   keyClaims?: string[];
+  /**
+   * Optional hero image. Mirrors how a Contentstack file/asset field comes back
+   * from the SDK — a single asset with a `uid` (and a resolved `url` when populated).
+   */
+  featuredImage?: { uid: string; url?: string };
 }
 
 /** Spec for how a channel wants its hero image cropped (mock — no real image ops). */

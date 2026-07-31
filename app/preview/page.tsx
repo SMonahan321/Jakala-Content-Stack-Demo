@@ -1,7 +1,67 @@
 import Link from "next/link";
 
+import { getChannelVariantsForBlog } from "@/lib/contentstack";
 import { SAMPLE_BLOG, sampleVariantsByChannel } from "@/lib/sample-data";
+import { CHANNELS } from "@/lib/types";
 import type { Channel, ChannelVariant, Locale } from "@/lib/types";
+
+/**
+ * Never statically prerender: the page reads live Contentstack data at request time
+ * (and must fall back to the fixture at runtime when creds/entries are absent).
+ */
+export const dynamic = "force-dynamic";
+
+/** Source Blog Post whose channel variants we render. Overridable via env. */
+const BLOG_ENTRY_UID = process.env.BLOG_ENTRY_UID ?? "blt91d3f8fb1f5ee359";
+
+type PreviewData = {
+  source: "live" | "sample";
+  blogTitle: string;
+  byChannel: Record<Channel, ChannelVariant[]>;
+};
+
+const LOCALE_ORDER: Locale[] = ["en", "es", "fr"];
+
+/** Group variants by channel, ordered en/es/fr, matching the fixture shape. */
+function groupByChannel(variants: ChannelVariant[]): Record<Channel, ChannelVariant[]> {
+  const byChannel = {
+    linkedin: [] as ChannelVariant[],
+    x: [] as ChannelVariant[],
+    instagram: [] as ChannelVariant[],
+  } satisfies Record<Channel, ChannelVariant[]>;
+  for (const variant of variants) byChannel[variant.channel].push(variant);
+  for (const channel of CHANNELS) {
+    byChannel[channel].sort(
+      (a, b) => LOCALE_ORDER.indexOf(a.locale) - LOCALE_ORDER.indexOf(b.locale),
+    );
+  }
+  return byChannel;
+}
+
+/**
+ * Try to load the real Channel Variant entries for the source blog. On ANY failure
+ * (missing creds, network error, or simply no entries yet) fall back to the static
+ * fixture so the page always renders.
+ */
+async function loadPreviewData(): Promise<PreviewData> {
+  try {
+    const variants = await getChannelVariantsForBlog(BLOG_ENTRY_UID);
+    if (variants.length > 0) {
+      return {
+        source: "live",
+        blogTitle: `Live entry ${BLOG_ENTRY_UID}`,
+        byChannel: groupByChannel(variants),
+      };
+    }
+  } catch {
+    // Swallow and fall back to the fixture below.
+  }
+  return {
+    source: "sample",
+    blogTitle: SAMPLE_BLOG.title,
+    byChannel: sampleVariantsByChannel(),
+  };
+}
 
 const CHANNEL_META: Record<
   Channel,
@@ -24,17 +84,20 @@ const LOCALE_LABEL: Record<Locale, string> = {
 
 const CHANNEL_ORDER: Channel[] = ["linkedin", "x", "instagram"];
 
-export default function PreviewPage() {
-  const byChannel = sampleVariantsByChannel();
+export default async function PreviewPage() {
+  const { source, blogTitle, byChannel } = await loadPreviewData();
 
   return (
     <main className="container">
       <Link href="/" style={{ fontSize: 14 }}>
         ← Back
       </Link>
-      <h1 style={{ fontSize: 34, margin: "10px 0 2px" }}>Channel preview</h1>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "10px 0 2px" }}>
+        <h1 style={{ fontSize: 34, margin: 0 }}>Channel preview</h1>
+        <DataSourceBadge source={source} />
+      </div>
       <p style={{ color: "var(--muted)", maxWidth: 760 }}>
-        Source blog: <strong style={{ color: "var(--text)" }}>{SAMPLE_BLOG.title}</strong>. Below,
+        Source blog: <strong style={{ color: "var(--text)" }}>{blogTitle}</strong>. Below,
         each row is a channel and each column is a locale — the 3 × 3 fan-out the agent produces. These
         are mock preview cards (no real posting); only Slack receives a real push after approval.
       </p>
@@ -64,6 +127,42 @@ export default function PreviewPage() {
         </section>
       ))}
     </main>
+  );
+}
+
+function DataSourceBadge({ source }: { source: "live" | "sample" }) {
+  const isLive = source === "live";
+  return (
+    <span
+      title={
+        isLive
+          ? "Rendering real channel_variant entries from the live Contentstack stack."
+          : "No live entries/credentials — showing the static sample fixture."
+      }
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "3px 10px",
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 600,
+        letterSpacing: 0.3,
+        color: isLive ? "#0a7d33" : "var(--muted)",
+        background: isLive ? "rgba(16,185,79,0.12)" : "rgba(148,163,184,0.14)",
+        border: `1px solid ${isLive ? "rgba(16,185,79,0.35)" : "rgba(148,163,184,0.3)"}`,
+      }}
+    >
+      <span
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          background: isLive ? "#10b94f" : "#94a3b8",
+        }}
+      />
+      {isLive ? "Live data" : "Sample data"}
+    </span>
   );
 }
 

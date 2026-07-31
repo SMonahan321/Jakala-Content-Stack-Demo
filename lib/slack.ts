@@ -34,14 +34,23 @@ const LOCALE_LABEL: Record<Locale, string> = {
 /**
  * Post a short digest of approved variants to Slack.
  * Returns the message timestamp (ts) on success.
+ *
+ * Guarded no-op: if Slack isn't configured (`SLACK_BOT_TOKEN` / `SLACK_CHANNEL_ID`
+ * absent), this skips the push and logs a notice rather than throwing — so the
+ * Contentstack write-back pipeline is never blocked by a deferred Slack integration.
  */
 export async function postApprovedVariants(
   blogTitle: string,
   variants: ChannelVariant[],
-): Promise<{ ok: boolean; ts?: string }> {
-  const channelId = process.env.SLACK_CHANNEL_ID;
-  if (!channelId) throw new Error("SLACK_CHANNEL_ID is not set.");
+): Promise<{ ok: boolean; ts?: string; skipped?: boolean }> {
+  if (!isSlackConfigured()) {
+    console.warn(
+      "[slack] SLACK_BOT_TOKEN / SLACK_CHANNEL_ID not set; skipping Slack push (deferred).",
+    );
+    return { ok: false, skipped: true };
+  }
 
+  const channelId = process.env.SLACK_CHANNEL_ID!;
   const client = getClient();
   const blocks = buildBlocks(blogTitle, variants);
 

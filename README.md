@@ -8,10 +8,11 @@ Author a blog post once in Contentstack, and an external AI agent automatically
 **transcreates** it (tone-aware, not literal translation) and **reformats** it into
 per-channel social variants across multiple locales — enforcing brand voice and
 **healthcare-compliance** guardrails, gating on human review, then pushing the
-approved result to Slack. Contentstack is the system of record; a Vercel app is the
-**orchestrator**, and the **deep reasoning** (transcreation + fact-check) is owned by
-**[Vercel eve](https://eve.dev)** — Vercel's durable backend-agent framework — showing
-how Contentstack governance can extend *beyond* Contentstack.
+approved result to Slack. Contentstack is the system of record and a Vercel app is the
+**orchestrator**. The **deep reasoning** (transcreation + fact-check) runs in-process on
+the **Vercel AI SDK** for the demo, behind a swappable seam that lets
+**[Vercel eve](https://eve.dev)** — Vercel's durable backend-agent framework — take it
+over as a stretch, showing how Contentstack governance can extend *beyond* Contentstack.
 
 ## The business problem
 
@@ -29,7 +30,7 @@ to LinkedIn, X, and Instagram in English, Spanish, and French — compliant and 
 
 | Area | Decision |
 | --- | --- |
-| **Orchestration** | A Vercel-hosted Next.js app is the **orchestrator** (webhook, Contentstack read/write, workflow-stage gating, Slack push, preview). The **deep reasoning** (transcreation + fact-check) is owned by **Vercel eve**, invoked by the orchestrator, with results written back to Contentstack. The raw Vercel AI SDK path remains an in-process fallback behind the same seam. Hybrid-with-Agent-OS-via-MCP is a **future** option, not built now. |
+| **Orchestration** | A Vercel-hosted Next.js app is the **orchestrator** (webhook, Contentstack read/write, workflow-stage gating, Slack push, preview). The **deep reasoning** (transcreation + fact-check) runs **in-process on the Vercel AI SDK** for the shipping demo, isolated behind a swappable `ReasoningService` seam so **Vercel eve** can take it over as a **stretch**. Eve-as-orchestrator and hybrid-with-Agent-OS-via-MCP are **future** options, not built now. |
 | **Trigger** | Contentstack workflow-stage transition to **"Ready for Distribution"** fires a webhook to the Vercel app. |
 | **Fan-out** | 3 channel variants — **LinkedIn, X/Twitter, Instagram** — stored as Contentstack entries and rendered as channel-accurate preview cards. |
 | **Real external push** | Exactly **one**: Slack (bot token). No real LinkedIn/X/IG posting — mock preview cards only. |
@@ -39,9 +40,9 @@ to LinkedIn, X, and Instagram in English, Spanish, and French — compliant and 
 | **Brand + compliance** | Brand voice + healthcare rules stored conceptually in a Contentstack **Brand Kit**, fed to the agent as grounding. A **Fact-Checker** validates that medical claims are supported by the source and that the required disclaimer is present. |
 | **Governance** | Generated variants land in a **"Needs Review"** stage; only human approval fires the real Slack push. Fact-check failure auto-flags. |
 | **Personalization** | **Out of scope** (roadmap only). |
-| **Stack** | Next.js (App Router, TypeScript) on Vercel (orchestrator) + **Vercel eve** for deep reasoning (with a Vercel AI SDK `ai` in-process fallback, provider-agnostic, OpenAI by default) + `@contentstack/management` for write-back + Slack via `@slack/web-api`. Reasoning provider is chosen by `REASONING_PROVIDER`. |
+| **Stack** | Next.js (App Router, TypeScript) on Vercel (orchestrator) + **Vercel AI SDK** (`ai`, provider-agnostic) routing models through **Vercel AI Gateway** (`provider/model` string form; `openai/gpt-4o` by default, with provider failover) for deep reasoning in the demo, behind a seam that can delegate to **Vercel eve** (stretch) + `@contentstack/management` for write-back + Slack via `@slack/web-api`. Reasoning provider is chosen by `REASONING_PROVIDER` (default `aisdk`). |
 | **Demo surface** | Contentstack UI + real Slack post + a minimal internal `/preview` page (3 channels × 3 locales). No customer-facing site. |
-| **Build reality** | Solo core builder, ~7 days, deadline **2026-07-31**. Lean, runnable scaffold. |
+| **Build reality** | Solo core builder, deadline **2026-07-31**. Ships on the proven AI SDK path; the Vercel eve integration is a stretch only if the core locks early. Lean, runnable scaffold. |
 
 ## Architecture flow
 
@@ -72,7 +73,7 @@ to LinkedIn, X, and Instagram in English, Spanish, and French — compliant and 
         │              │  • factCheck:   claim-support + prohibited-claim│────┘
         │              │  durable runs · AI Gateway model routing        │
         │              └──────────────────────────────────────────────┘
-        │                          (fallback: in-process Vercel AI SDK)
+        │              (demo default: in-process Vercel AI SDK · eve = stretch)
         ▼                                                     │ fail → flag
   ┌──────────────────────────────┐              ┌──────────────────────────┐
   │ Channel Variant entries      │              │ variant.status = flagged │
@@ -92,7 +93,7 @@ to LinkedIn, X, and Instagram in English, Spanish, and French — compliant and 
 | --- | --- |
 | **Contentstack** | System of record: Blog Post source, Channel Variant entries, locales, workflow stages, Brand Kit, webhook trigger. |
 | **Vercel app (orchestrator)** | Webhook receipt + secret verification, reading the Blog Post, fanning out the channel × locale matrix, invoking the reasoning seam, the deterministic disclaimer backstop + pass/flag gating, write-back via the Management API, moving the Blog Post to "Needs Review", the approval-gated Slack push, and the `/preview` page. |
-| **Vercel eve (deep reasoning)** | The two reasoning tasks only: **transcreation** (tone-aware channel/locale adaptation) and **fact-check** claim analysis (unsupported/prohibited claims). eve provides durable runs, sandboxing, and AI-Gateway model routing. Selected via `REASONING_PROVIDER=eve`; the raw Vercel AI SDK is the in-process fallback (`REASONING_PROVIDER=aisdk`, the default).
+| **Deep reasoning** | The two reasoning tasks only: **transcreation** (tone-aware channel/locale adaptation) and **fact-check** claim analysis (unsupported/prohibited claims). The demo runs these **in-process on the Vercel AI SDK** (`REASONING_PROVIDER=aisdk`, the default). The same seam can delegate to **Vercel eve** (`REASONING_PROVIDER=eve`) as a stretch, gaining durable runs, sandboxing, and AI-Gateway model routing.
 
 ## Deep reasoning: Vercel eve
 
@@ -146,6 +147,7 @@ Because everything is behind `ReasoningService`, swapping to eve requires **no c
 | Summary | `summary` | text |
 | Body | `body` | multiline text (required) |
 | Key Claims | `key_claims` | text (multiple) — source-of-truth claims for the fact-checker |
+| Featured Image | `featured_image` | file (single asset, optional) — hero image; source for channel image-crop specs |
 
 ### `Channel Variant` (`channel_variant`) — generated output
 | Field | uid | Type |
@@ -173,9 +175,17 @@ Full JSON definitions and creation steps live in [`content-models/`](./content-m
 - **Content Cloud — webhooks:** stage transition triggers the external agent.
 - **Brand Kit:** brand voice + healthcare compliance rules as agent grounding (see `lib/brandkit.ts`).
 - **Fact-Checker:** claim-support + required-disclaimer validation per variant (deterministic disclaimer backstop + gating in `lib/factcheck.ts`; claim analysis via the reasoning seam).
-- **Beyond Contentstack:** **Vercel eve** durable agent performing the deep reasoning (transcreation + fact-check) behind a swappable seam (`lib/eve.ts`); **Slack** as the one real external activation.
+- **Beyond Contentstack:** deep reasoning (transcreation + fact-check) behind a swappable seam (`lib/eve.ts`) — in-process Vercel AI SDK today, with a **Vercel eve** durable agent as the documented stretch; **Slack** as the one real external activation.
 
 ## MVP vs. stretch
+
+> **Current focus (scope note).** The immediate priority is that data in Contentstack
+> is created/updated **correctly** — the content models (via `npm run sync:models`)
+> and the Channel Variant write-back through the Management API. **Slack is deferred**:
+> the pipeline runs and writes to Contentstack **without** Slack configured, and the
+> Slack push is a **guarded no-op** (skips + logs a notice) when `SLACK_BOT_TOKEN` /
+> `SLACK_CHANNEL_ID` are absent. The Slack code stays in place to re-enable later. The
+> Vercel eve integration remains a **stretch** (see below), unchanged.
 
 **MVP (must ship for the demo)**
 - Webhook trigger → agent → transcreation for 3 channels × 3 locales.
@@ -188,6 +198,7 @@ Full JSON definitions and creation steps live in [`content-models/`](./content-m
 - Fact-check citations linking flagged claims to source spans.
 - Regenerate-single-variant action from the preview page.
 - Approve/flag actions written back to Contentstack from the app.
+- Wire **Vercel eve** as the deep-reasoning provider (`REASONING_PROVIDER=eve`), or go further to **eve-as-orchestrator** (eve owns the durable loop + native approvals).
 - Hybrid orchestration with **Agent OS via MCP**.
 - **Personalization** / real-time decisioning (currently out of scope).
 - Real channel publishing adapters (LinkedIn/X/IG) behind the same interface.
@@ -212,10 +223,27 @@ cp .env.example .env.local   # fill in when you have creds (not needed to build)
 npm run dev                  # http://localhost:3000  →  /preview renders from the fixture
 npm run build                # production build
 npm run typecheck            # tsc --noEmit
+npm run sync:models -- --dry-run  # preview the content-type create/update plan (read-only)
+npm run sync:models          # create/update the Contentstack content types from content-models/*.json
 ```
 
 The `/preview` page and `npm run build` work **without any credentials** (they use the
 fixture in `lib/sample-data.ts`). Live keys are only needed to run the real pipeline.
+
+Once you have `CONTENTSTACK_API_KEY` + `CONTENTSTACK_MANAGEMENT_TOKEN` (and
+`CONTENTSTACK_REGION` for non-NA stacks), run **`npm run sync:models`** to provision
+the `blog_post` and `channel_variant` content types programmatically from the JSON in
+[`content-models/`](./content-models). It's idempotent (create-or-update) and
+non-destructive — re-run it any time the JSON changes (e.g. after adding a field like
+`featured_image`). See [`content-models/README.md`](./content-models/README.md) for
+details.
+
+**Env loading & dry run.** `npm run sync:models` loads credentials automatically from
+`.env.local` then `.env` at the repo root (Next.js-style precedence: `.env.local`
+overrides `.env`), so just fill in your `.env`/`.env.local` and run — no manual
+`export`. Preview safely first with **`npm run sync:models -- --dry-run`** (alias:
+`npm run sync:models:dry`): it authenticates and lists content types read-only,
+prints whether each type **would be created/updated**, and exits **without writing**.
 
 ## Environment variables
 
@@ -225,11 +253,12 @@ Documented in [`.env.example`](./.env.example). Required to run the live pipelin
 | --- | --- |
 | `CONTENTSTACK_API_KEY` | Stack API key. |
 | `CONTENTSTACK_MANAGEMENT_TOKEN` | Management token (read/write content types + entries). |
+| `CONTENTSTACK_REGION` | Optional. Stack region for non-NA stacks: `na` (default) `\| eu \| au \| azure-na \| azure-eu \| gcp-na \| gcp-eu`. Used by `npm run sync:models` to hit the right API host. |
 | `CONTENTSTACK_ENVIRONMENT` | Delivery environment name (e.g. `development`). |
 | `CONTENTSTACK_WEBHOOK_SECRET` | Shared secret to verify the inbound webhook. |
 | `REASONING_PROVIDER` | `aisdk` (default, in-process AI SDK) or `eve` (delegate to a deployed Vercel eve agent). Selects the implementation behind `lib/eve.ts`. |
-| `OPENAI_API_KEY` | AI provider key for the `aisdk` path (provider is swappable in `lib/eve.ts`). |
-| `AI_MODEL` | Optional model id override for the `aisdk` path (defaults to `gpt-4o`). |
+| `AI_GATEWAY_API_KEY` | Vercel AI Gateway key for the `aisdk` path. Needed for local/non-Vercel runs; on Vercel deployments it can be **omitted** (OIDC authenticates automatically). The Gateway also gives provider failover. |
+| `AI_MODEL` | Optional model override for the `aisdk` path, in `provider/model` form (defaults to `openai/gpt-4o`). Swap providers by changing this (e.g. `anthropic/claude-sonnet-4.6`). |
 | `EVE_AGENT_URL` | Base URL of the deployed eve agent's HTTP channel. Required when `REASONING_PROVIDER=eve`. |
 | `EVE_TRIGGER_SECRET` | Shared secret sent as `Authorization: Bearer …` to the eve agent's channel. |
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-…`). |
@@ -253,4 +282,6 @@ lib/
   types.ts               Shared domain types (Channel, Locale, BlogPost, ChannelVariant…)
   sample-data.ts         Filled flu-campaign fixture for the preview page
 content-models/          Blog Post + Channel Variant JSON + setup notes
+scripts/
+  sync-content-models.ts Idempotent create/update of the content types from content-models/*.json
 ```

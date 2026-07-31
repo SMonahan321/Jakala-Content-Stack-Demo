@@ -24,6 +24,10 @@ export const SAMPLE_BLOG: BlogPost = {
     "Vaccines are recommended for everyone 6 months and older.",
     "Walk-ins are welcome and most insurance plans cover the cost.",
   ],
+  featuredImage: {
+    uid: "blt_sample_flu_hero",
+    url: "https://images.contentstack.io/v3/assets/placeholder/flu-campaign-hero.jpg",
+  },
 };
 
 const CROP: Record<Channel, ImageCropSpec> = {

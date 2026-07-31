@@ -15,7 +15,8 @@
  *
  * Two implementations are provided and selected via `REASONING_PROVIDER`:
  *   - `aisdk` (DEFAULT) — runs the reasoning in-process with the Vercel AI SDK
- *     (`ai` + `@ai-sdk/openai`). Safe to build and run; this is the working fallback.
+ *     (`ai`), routing the model through **Vercel AI Gateway** via the `provider/model`
+ *     string form. Safe to build and run; this is the working fallback.
  *   - `eve`             — a thin HTTP client that triggers a deployed eve agent. The
  *     exact request/response envelope is a TODO because it depends on how the eve
  *     agent's HTTP channel is authored (see notes on `EveReasoningService`).
@@ -25,7 +26,6 @@
  */
 
 import { generateObject } from "ai";
-import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 
 import { BRAND_KIT, requiredDisclaimer } from "./brandkit";
@@ -171,33 +171,71 @@ function buildFactCheckPrompt(
   return { system, prompt };
 }
 
-function resolveModel() {
-  // Provider-agnostic by design: swap this line to change providers.
-  // e.g. `import { anthropic } from "@ai-sdk/anthropic"` then `anthropic(modelId)`.
-  const modelId = process.env.AI_MODEL || "gpt-4o";
-  return openai(modelId);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** True when an error looks like a provider/gateway rate-limit (free-tier throttling). */
+function isRateLimitError(err: unknown): boolean {
+  const msg = (err as Error)?.message ?? String(err);
+  return /rate.?limit|429|too many requests/i.test(msg);
+}
+
+/**
+ * Run a reasoning call with rate-limit-aware retry. The AI SDK already retries a few
+ * times quickly; free-tier gateway limits need LONGER, spaced-out waits, so we back off
+ * up to a handful of times before giving up. Tunable via `AI_RATELIMIT_MAX_RETRIES`.
+ */
+async function withRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
+  const maxRetries = Number(process.env.AI_RATELIMIT_MAX_RETRIES ?? 6);
+  const baseDelayMs = Number(process.env.AI_RATELIMIT_BASE_MS ?? 12000);
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isRateLimitError(err) || attempt >= maxRetries) throw err;
+      const waitMs = baseDelayMs * (attempt + 1);
+      console.warn(
+        `[reasoning] rate-limited; backing off ${Math.round(waitMs / 1000)}s (retry ${attempt + 1}/${maxRetries})`,
+      );
+      await sleep(waitMs);
+      attempt++;
+    }
+  }
+}
+
+function resolveModel(): string {
+  // Route through Vercel AI Gateway. Passing a `provider/model` string to the AI SDK
+  // makes it use the built-in global gateway provider automatically (no extra package):
+  // it authenticates with `AI_GATEWAY_API_KEY` locally, or Vercel OIDC when deployed.
+  // Swap providers by changing the string, e.g. `anthropic/claude-sonnet-4.6`.
+  return process.env.AI_MODEL || "openai/gpt-4o";
 }
 
 /* ── AI SDK implementation (the in-process fallback + default) ────────────── */
 
 /**
- * Runs the deep reasoning in-process via the Vercel AI SDK. Requires a provider key
- * (`OPENAI_API_KEY`) at RUNTIME only — the project still builds/typechecks without it
- * because reasoning is only invoked from the webhook pipeline.
+ * Runs the deep reasoning in-process via the Vercel AI SDK, routing the model through
+ * **Vercel AI Gateway** (the `provider/model` string form). Requires credentials at
+ * RUNTIME only — `AI_GATEWAY_API_KEY` for local/non-Vercel runs, or automatic OIDC when
+ * deployed on Vercel (no key needed there). The Gateway also gives provider failover.
+ * The project still builds/typechecks without any key because reasoning is only invoked
+ * from the webhook pipeline.
  */
 export class AiSdkReasoningService implements ReasoningService {
   readonly name = "aisdk";
 
   async transcreate({ source, target }: TranscreateInput): Promise<TranscreateResult> {
     const { system, prompt } = buildTranscreatePrompt(source, target);
-    const { object } = await generateObject({
-      model: resolveModel(),
-      schema: variantSchema,
-      schemaName: "ChannelVariant",
-      schemaDescription: "A single social post transcreated for one channel and locale.",
-      system,
-      prompt,
-    });
+    const { object } = await withRateLimitRetry(() =>
+      generateObject({
+        model: resolveModel(),
+        schema: variantSchema,
+        schemaName: "ChannelVariant",
+        schemaDescription: "A single social post transcreated for one channel and locale.",
+        system,
+        prompt,
+      }),
+    );
     return {
       formattedText: object.formattedText,
       hashtags: object.hashtags.map((h) => h.replace(/^#/, "")),
@@ -206,14 +244,16 @@ export class AiSdkReasoningService implements ReasoningService {
 
   async factCheck({ source, variant }: FactCheckInput): Promise<FactCheckReasoning> {
     const { system, prompt } = buildFactCheckPrompt(source, variant);
-    const { object } = await generateObject({
-      model: resolveModel(),
-      schema: factCheckSchema,
-      schemaName: "FactCheck",
-      schemaDescription: "Assessment of whether a social variant is supported by its source.",
-      system,
-      prompt,
-    });
+    const { object } = await withRateLimitRetry(() =>
+      generateObject({
+        model: resolveModel(),
+        schema: factCheckSchema,
+        schemaName: "FactCheck",
+        schemaDescription: "Assessment of whether a social variant is supported by its source.",
+        system,
+        prompt,
+      }),
+    );
     return {
       unsupportedClaims: object.unsupportedClaims,
       prohibitedClaimsFound: object.prohibitedClaimsFound,

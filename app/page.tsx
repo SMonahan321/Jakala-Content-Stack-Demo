@@ -52,7 +52,7 @@ export default function Home() {
       <h2 style={{ marginTop: 40 }}>The pieces</h2>
       <ul style={{ color: "var(--muted)", maxWidth: 760 }}>
         <li>Contentstack — system of record: content modeling, localization, workflows, webhooks.</li>
-        <li>Vercel + Vercel AI SDK — the external agent brain doing tone-aware transcreation.</li>
+        <li>Vercel app — the orchestrator; Vercel eve owns the deep reasoning (transcreation + fact-check).</li>
         <li>Brand Kit + Fact-Checker — grounding and compliance guardrails.</li>
         <li>Slack — the one real external push, gated behind human approval.</li>
       </ul>

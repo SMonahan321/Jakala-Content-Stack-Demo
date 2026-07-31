@@ -16,15 +16,9 @@
 
 import { NextResponse } from "next/server";
 
-import { transcreateAll, buildTargetMatrix } from "@/lib/agent";
-import { applyFactCheck, factCheckVariant } from "@/lib/factcheck";
-import {
-  getBlogPost,
-  isContentstackConfigured,
-  persistChannelAcrossLocales,
-  setBlogWorkflowStage,
-} from "@/lib/contentstack";
-import { CHANNELS, type BlogPost, type Channel, type ChannelVariant } from "@/lib/types";
+import { buildTargetMatrix } from "@/lib/agent";
+import { isContentstackConfigured } from "@/lib/contentstack";
+import { runPipeline } from "@/lib/pipeline";
 
 // The pipeline calls external providers; give it room and keep it on Node.
 export const runtime = "nodejs";
@@ -101,47 +95,4 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
-}
-
-/**
- * The orchestration itself, factored out so it can be unit-tested / reused.
- * Slack is intentionally NOT called here — that fires only on human approval.
- */
-async function runPipeline(entryUid: string) {
-  const source: BlogPost = await getBlogPost(entryUid, "en");
-
-  // 1. Transcreate the full channel × locale matrix.
-  const generated: ChannelVariant[] = await transcreateAll(source);
-
-  // 2. Fact-check every variant; failures are auto-flagged.
-  const reviewed: ChannelVariant[] = [];
-  for (const variant of generated) {
-    const result = await factCheckVariant(source, variant);
-    reviewed.push(applyFactCheck(variant, result));
-  }
-
-  // 3. Write back to Contentstack, one master entry per channel across en/es/fr.
-  const writtenEntryUids: Record<string, string> = {};
-  for (const channel of CHANNELS as readonly Channel[]) {
-    const channelVariants = reviewed.filter((v) => v.channel === channel);
-    if (channelVariants.length === 0) continue;
-    writtenEntryUids[channel] = await persistChannelAcrossLocales(channelVariants);
-  }
-
-  // 4. Move the source Blog Post into the human review gate.
-  // TODO: replace "needs_review_stage_uid" with the real workflow-stage uid from your stack.
-  await setBlogWorkflowStage(entryUid, "needs_review_stage_uid", "Needs Review", "en");
-
-  const flagged = reviewed.filter((v) => v.status === "flagged");
-  return {
-    sourceUid: entryUid,
-    variantCount: reviewed.length,
-    flaggedCount: flagged.length,
-    writtenEntryUids,
-    flagged: flagged.map((v) => ({
-      channel: v.channel,
-      locale: v.locale,
-      reasons: v.factCheck?.reasons ?? [],
-    })),
-  };
 }

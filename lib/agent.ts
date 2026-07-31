@@ -56,6 +56,10 @@ export async function transcreateVariant(
   return draftToVariant(source, target, draft);
 }
 
+/** Optional spacing between provider calls to stay under free-tier rate limits. */
+const THROTTLE_MS = Number(process.env.AI_THROTTLE_MS ?? 0);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /** Transcreate the full channel × locale matrix. */
 export async function transcreateAll(source: BlogPost): Promise<ChannelVariant[]> {
   const targets = buildTargetMatrix();
@@ -64,6 +68,7 @@ export async function transcreateAll(source: BlogPost): Promise<ChannelVariant[]
   const variants: ChannelVariant[] = [];
   for (const target of targets) {
     variants.push(await transcreateVariant(source, target));
+    if (THROTTLE_MS > 0) await sleep(THROTTLE_MS);
   }
   return variants;
 }
