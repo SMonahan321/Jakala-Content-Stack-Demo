@@ -65,7 +65,7 @@ to LinkedIn, X, and Instagram in English, Spanish, and French — compliant and 
   │    4. gate each variant on the fact-check result  ◄── results ────────┐││
   │       (deterministic disclaimer backstop + pass/flag stays here)      │││
   └───────────────────────────────────────────────────────────────────────┘
-        │ write-back (Management API)          reasoning seam (lib/eve.ts) │││
+        │ write-back (Management API)    reasoning seam (lib/reasoning.ts) │││
         │                                                    ▼             │││
         │                        Vercel eve  (DEEP REASONING) ◄────────────┘││
         │              ┌──────────────────────────────────────────────┐    ││
@@ -99,7 +99,7 @@ to LinkedIn, X, and Instagram in English, Spanish, and French — compliant and 
 
 The channel/locale **transcreation** and the **fact-check** claim analysis are the two
 "deep reasoning" tasks. They are isolated behind a single seam — `ReasoningService` in
-[`lib/eve.ts`](./lib/eve.ts) — so the implementation is swappable via `REASONING_PROVIDER`.
+[`lib/reasoning.ts`](./lib/reasoning.ts) — so the implementation is swappable via `REASONING_PROVIDER`.
 
 ### What Vercel eve is (from research)
 
@@ -132,7 +132,7 @@ JSON back"* endpoint is **not a documented drop-in**. So in this scaffold:
   `{ task, input }` to `EVE_AGENT_URL` with a bearer `EVE_TRIGGER_SECRET` and expects
   `{ result }` back. **The request/response envelope is a clearly-marked `TODO`** — to wire
   it concretely you author an eve agent whose HTTP channel accepts that payload and returns
-  structured output, deploy it (`npx eve deploy`), then adapt the parsing in `lib/eve.ts` to
+  structured output, deploy it (`npx eve deploy`), then adapt the parsing in `lib/reasoning.ts` to
   eve's real session/turn response shape.
 
 Because everything is behind `ReasoningService`, swapping to eve requires **no change** to
@@ -175,7 +175,7 @@ Full JSON definitions and creation steps live in [`content-models/`](./content-m
 - **Content Cloud — webhooks:** stage transition triggers the external agent.
 - **Brand Kit:** brand voice + healthcare compliance rules as agent grounding (see `lib/brandkit.ts`).
 - **Fact-Checker:** claim-support + required-disclaimer validation per variant (deterministic disclaimer backstop + gating in `lib/factcheck.ts`; claim analysis via the reasoning seam).
-- **Beyond Contentstack:** deep reasoning (transcreation + fact-check) behind a swappable seam (`lib/eve.ts`) — in-process Vercel AI SDK today, with a **Vercel eve** durable agent as the documented stretch; **Slack** as the one real external activation.
+- **Beyond Contentstack:** deep reasoning (transcreation + fact-check) behind a swappable seam (`lib/reasoning.ts`) — in-process Vercel AI SDK today, with a **Vercel eve** durable agent as the documented stretch; **Slack** as the one real external activation.
 
 ## MVP vs. stretch
 
@@ -256,7 +256,7 @@ Documented in [`.env.example`](./.env.example). Required to run the live pipelin
 | `CONTENTSTACK_REGION` | Optional. Stack region for non-NA stacks: `na` (default) `\| eu \| au \| azure-na \| azure-eu \| gcp-na \| gcp-eu`. Used by `npm run sync:models` to hit the right API host. |
 | `CONTENTSTACK_ENVIRONMENT` | Delivery environment name (e.g. `development`). |
 | `CONTENTSTACK_WEBHOOK_SECRET` | Shared secret to verify the inbound webhook. |
-| `REASONING_PROVIDER` | `aisdk` (default, in-process AI SDK) or `eve` (delegate to a deployed Vercel eve agent). Selects the implementation behind `lib/eve.ts`. |
+| `REASONING_PROVIDER` | `aisdk` (default, in-process AI SDK) or `eve` (delegate to a deployed Vercel eve agent). Selects the implementation behind `lib/reasoning.ts`. |
 | `AI_GATEWAY_API_KEY` | Vercel AI Gateway key for the `aisdk` path. Needed for local/non-Vercel runs; on Vercel deployments it can be **omitted** (OIDC authenticates automatically). The Gateway also gives provider failover. |
 | `AI_MODEL` | Optional model override for the `aisdk` path, in `provider/model` form (defaults to `openai/gpt-4o`). Swap providers by changing this (e.g. `anthropic/claude-sonnet-4.6`). |
 | `EVE_AGENT_URL` | Base URL of the deployed eve agent's HTTP channel. Required when `REASONING_PROVIDER=eve`. |
@@ -273,7 +273,7 @@ app/
   api/webhook/route.ts   Contentstack webhook receiver + pipeline orchestrator
   layout.tsx, globals.css
 lib/
-  eve.ts                 Deep-reasoning seam: ReasoningService interface + eve/AI-SDK impls + factory
+  reasoning.ts           Deep-reasoning seam: ReasoningService interface + eve/AI-SDK impls + factory
   agent.ts               Transcreation orchestration (fan-out matrix + variant shaping) via the seam
   factcheck.ts           Disclaimer backstop + pass/flag gating; claim analysis via the seam
   contentstack.ts        Management API wrapper (read blog, write variants, workflow)

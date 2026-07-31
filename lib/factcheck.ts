@@ -6,13 +6,13 @@
  *   2. The required (localized) disclaimer is present.
  *
  * The claim analysis (deep reasoning) is delegated to the reasoning seam in
- * `lib/eve.ts` — owned by Vercel eve when `REASONING_PROVIDER=eve`, or run in-process
+ * `lib/reasoning.ts` — owned by Vercel eve when `REASONING_PROVIDER=eve`, or run in-process
  * via the Vercel AI SDK otherwise. The deterministic disclaimer check and the
  * pass/flag gating stay HERE: governance is owned by our orchestrator, not the model.
  */
 
 import { DISCLAIMER_CORE_PHRASE, requiredDisclaimer } from "./brandkit";
-import { getReasoningService, type FactCheckReasoning } from "./eve";
+import { getReasoningService, type FactCheckReasoning } from "./reasoning";
 import type { BlogPost, ChannelVariant, FactCheckResult } from "./types";
 
 /** Loose, accent-insensitive containment check for the disclaimer backstop. */

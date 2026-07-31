@@ -5,10 +5,10 @@
  * TRANSCREATION (not a literal translation) shaped to the channel. Transcreation is
  * non-literal but NOT lossy: every variant must preserve the source's key audience and
  * material benefits (e.g. that the content helps older/elderly community members). The
- * grounding for that preservation lives in the reasoning-seam prompts/schema (`lib/eve.ts`).
+ * grounding for that preservation lives in the reasoning-seam prompts/schema (`lib/reasoning.ts`).
  *
  * The DEEP REASONING (channel/locale tone adaptation) is delegated to the reasoning
- * seam in `lib/eve.ts` — owned by Vercel eve when `REASONING_PROVIDER=eve`, or run
+ * seam in `lib/reasoning.ts` — owned by Vercel eve when `REASONING_PROVIDER=eve`, or run
  * in-process via the Vercel AI SDK otherwise. This file keeps the orchestrator-owned
  * concerns: the channel × locale fan-out matrix, crop specs, and `ChannelVariant`
  * shaping.
@@ -19,7 +19,7 @@ import {
   conciseDisclaimer,
   DISCLAIMER_CORE_PHRASE,
 } from "./brandkit";
-import { getReasoningService, type TranscreateResult } from "./eve";
+import { getReasoningService, type TranscreateResult } from "./reasoning";
 import {
   CHANNELS,
   LOCALES,

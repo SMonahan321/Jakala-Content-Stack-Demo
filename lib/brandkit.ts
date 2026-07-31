@@ -101,7 +101,7 @@ export function requiredDisclaimer(locale: Locale): string {
  * (e.g. X, 280 chars) cannot fit the full disclaimer: it is deliberately short but
  * STILL contains the locale's core recognizable phrase (see `DISCLAIMER_CORE_PHRASE`)
  * so the fact-checker recognizes it. Never drop the disclaimer to save space — swap in
- * this form instead. Single source of truth shared by the generation prompts (`lib/eve.ts`)
+ * this form instead. Single source of truth shared by the generation prompts (`lib/reasoning.ts`)
  * and the deterministic char-limit guardrail (`lib/agent.ts`).
  */
 export const CONCISE_DISCLAIMER: Record<Locale, string> = {
