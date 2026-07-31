@@ -1,14 +1,14 @@
 import Link from "next/link";
 
 const FLOW: { step: string; detail: string }[] = [
-  { step: "Author", detail: "Edits the Blog Post entry (en) in Contentstack." },
-  { step: "Trigger", detail: 'Moves workflow stage to "Ready for Distribution".' },
+  { step: "Author", detail: "Edit the Blog Post entry (en) in Contentstack." },
+  { step: "Trigger", detail: 'Publish / move it to "Ready for Distribution".' },
   { step: "Webhook", detail: "Contentstack calls the Vercel /api/webhook route." },
-  { step: "Agent", detail: "Loads entry + Brand Kit; transcreates × 3 channels × 3 locales." },
+  { step: "Agent", detail: "Loads entry + Brand Kit; transcreates × 3 channels × 3 locales via Vercel AI Gateway." },
   { step: "Fact-Check", detail: "Claims supported by source? Required disclaimer present?" },
-  { step: "Write-back", detail: "Creates Channel Variant entries + es/fr locales via Management API." },
-  { step: "Review gate", detail: 'Blog Post moves to "Needs Review"; a human approves.' },
-  { step: "Distribute", detail: "Approval fires the real Slack push; preview cards render." },
+  { step: "Write-back", detail: "Creates localized Channel Variant entries (en/es/fr) via the Management API." },
+  { step: "Review gate", detail: "Variants land in a review state for human approval." },
+  { step: "Preview", detail: "Approved variants render as channel-accurate cards. (Slack distribution: roadmap.)" },
 ];
 
 export default function Home() {
@@ -20,8 +20,10 @@ export default function Home() {
       <h1 style={{ fontSize: 44, margin: "8px 0 4px" }}>One post, shared everywhere</h1>
       <p style={{ fontSize: 18, color: "var(--muted)", maxWidth: 720 }}>
         An AI agent that takes a single source blog post authored in Contentstack and automatically
-        transcreates + reformats it into per-channel social variants across multiple locales, enforces
-        brand and healthcare-compliance guardrails, gates on human review, then pushes to Slack.
+        transcreates + reformats it into per-channel social variants across multiple locales — enforcing
+        brand and healthcare-compliance guardrails, with a human review gate. Contentstack is the system
+        of record; a Vercel app orchestrates, and the deep reasoning runs on the Vercel AI SDK via
+        Vercel AI Gateway.
       </p>
 
       <div style={{ margin: "28px 0" }}>
@@ -52,9 +54,9 @@ export default function Home() {
       <h2 style={{ marginTop: 40 }}>The pieces</h2>
       <ul style={{ color: "var(--muted)", maxWidth: 760 }}>
         <li>Contentstack — system of record: content modeling, localization, workflows, webhooks.</li>
-        <li>Vercel app — the orchestrator; Vercel eve owns the deep reasoning (transcreation + fact-check).</li>
+        <li>Vercel AI SDK + AI Gateway — the external agent brain doing tone-aware transcreation (provider failover, keyless OIDC).</li>
         <li>Brand Kit + Fact-Checker — grounding and compliance guardrails.</li>
-        <li>Slack — the one real external push, gated behind human approval.</li>
+        <li>Preview cards — channel-accurate variants across locales. (Slack push: roadmap.)</li>
       </ul>
     </main>
   );
