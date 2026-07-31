@@ -12,7 +12,7 @@
  */
 
 import { requiredDisclaimer } from "./brandkit";
-import { getReasoningService } from "./eve";
+import { getReasoningService, type FactCheckReasoning } from "./eve";
 import type { BlogPost, ChannelVariant, FactCheckResult } from "./types";
 
 /** Loose, accent-insensitive containment check for the disclaimer backstop. */
@@ -45,20 +45,26 @@ export function hasRequiredDisclaimer(variant: ChannelVariant): boolean {
 }
 
 /**
- * Fact-check a single variant against its source blog.
- *
- * The claim analysis runs through the reasoning seam (needs a configured provider at
- * runtime); the deterministic disclaimer check runs regardless. Only invoked from the
- * webhook pipeline, so the project builds/typechecks without any credentials.
+ * Empty assessment used as a safe backstop when the batched model response omits a
+ * locale. The deterministic disclaimer check + gating below still run, so a missing
+ * model assessment can never silently "pass" a variant with no disclaimer.
  */
-export async function factCheckVariant(
-  source: BlogPost,
-  variant: ChannelVariant,
-): Promise<FactCheckResult> {
-  const disclaimerPresent = hasRequiredDisclaimer(variant);
+const EMPTY_ASSESSMENT: FactCheckReasoning = {
+  unsupportedClaims: [],
+  prohibitedClaimsFound: [],
+  reasoning: "",
+};
 
-  const reasoning = getReasoningService();
-  const assessment = await reasoning.factCheck({ source, variant });
+/**
+ * Combine the model's claim analysis for one variant with our DETERMINISTIC governance:
+ * the required-disclaimer backstop and the pass/flag gating. Governance is owned by the
+ * orchestrator, not the model — so this runs regardless of what the model returned.
+ */
+function gateAssessment(
+  variant: ChannelVariant,
+  assessment: FactCheckReasoning,
+): FactCheckResult {
+  const disclaimerPresent = hasRequiredDisclaimer(variant);
 
   const unsupportedClaims = [...assessment.unsupportedClaims, ...assessment.prohibitedClaimsFound];
   const pass = unsupportedClaims.length === 0 && disclaimerPresent;
@@ -75,6 +81,51 @@ export async function factCheckVariant(
   if (pass) reasons.push("All claims supported by source and disclaimer present.");
 
   return { pass, disclaimerPresent, unsupportedClaims, reasons };
+}
+
+/**
+ * Fact-check ALL locale variants of ONE channel in a single reasoning call, then apply
+ * the deterministic disclaimer backstop + pass/flag gating to each. Batching collapses
+ * the per-variant fan-out (3 → 1 Gateway call per channel).
+ *
+ * The claim analysis runs through the reasoning seam (needs a configured provider at
+ * runtime); the deterministic checks run regardless. Only invoked from the webhook
+ * pipeline, so the project builds/typechecks without any credentials. Returns one
+ * `FactCheckResult` per input variant, in the same order.
+ */
+export async function factCheckChannel(
+  source: BlogPost,
+  variants: ChannelVariant[],
+): Promise<FactCheckResult[]> {
+  if (variants.length === 0) return [];
+
+  const reasoning = getReasoningService();
+  const { byLocale } = await reasoning.factCheckChannel({ source, variants });
+
+  return variants.map((variant) => gateAssessment(variant, byLocale[variant.locale] ?? EMPTY_ASSESSMENT));
+}
+
+/**
+ * Fact-check the ENTIRE set of variants (all channels/locales) in a SINGLE reasoning
+ * call, then apply the deterministic disclaimer backstop + pass/flag gating to each.
+ * This is the maximal batching (9 → 1 Gateway call) the pipeline uses to stay well under
+ * the webhook timeout on rate-limited tiers.
+ *
+ * Governance still runs per variant regardless of the model output. Returns one
+ * `FactCheckResult` per input variant, in the same order.
+ */
+export async function factCheckAll(
+  source: BlogPost,
+  variants: ChannelVariant[],
+): Promise<FactCheckResult[]> {
+  if (variants.length === 0) return [];
+
+  const reasoning = getReasoningService();
+  const { byChannel } = await reasoning.factCheckMatrix({ source, variants });
+
+  return variants.map((variant) =>
+    gateAssessment(variant, byChannel[variant.channel]?.[variant.locale] ?? EMPTY_ASSESSMENT),
+  );
 }
 
 /** Apply a fact-check result to a variant, setting status to flagged/needs_review. */

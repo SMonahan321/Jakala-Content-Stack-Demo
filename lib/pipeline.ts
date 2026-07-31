@@ -18,7 +18,7 @@
  */
 
 import { transcreateAll } from "./agent";
-import { applyFactCheck, factCheckVariant } from "./factcheck";
+import { applyFactCheck, factCheckAll } from "./factcheck";
 import {
   getBlogPost,
   persistChannelAcrossLocales,
@@ -46,15 +46,15 @@ export async function runPipeline(entryUid: string): Promise<PipelineResult> {
   // 1. Read the source Blog Post in the logical master locale ("en" → stack master).
   const source: BlogPost = await getBlogPost(entryUid, "en");
 
-  // 2. Transcreate the full channel × locale matrix.
+  // 2. Transcreate the full channel × locale matrix in ONE batched Gateway call.
   const generated: ChannelVariant[] = await transcreateAll(source);
 
-  // 3. Fact-check every variant; failures are auto-flagged.
-  const reviewed: ChannelVariant[] = [];
-  for (const variant of generated) {
-    const result = await factCheckVariant(source, variant);
-    reviewed.push(applyFactCheck(variant, result));
-  }
+  // 3. Fact-check every variant in ONE batched Gateway call; the deterministic disclaimer
+  //    backstop + pass/flag gating still run per variant. Failures are auto-flagged.
+  const results = await factCheckAll(source, generated);
+  const reviewed: ChannelVariant[] = generated.map((variant, i) =>
+    applyFactCheck(variant, results[i]),
+  );
 
   // 4. Write back to Contentstack: one master entry per channel across en/es/fr.
   const writtenEntryUids: Record<string, string> = {};

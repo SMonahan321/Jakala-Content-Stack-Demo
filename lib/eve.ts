@@ -29,17 +29,14 @@ import { generateObject } from "ai";
 import { z } from "zod";
 
 import { BRAND_KIT, requiredDisclaimer } from "./brandkit";
-import type { BlogPost, Locale, ChannelVariant, Target } from "./types";
+import type { BlogPost, Channel, Locale, ChannelVariant } from "./types";
 
 /* ── Reasoning contracts ─────────────────────────────────────────────────── */
 
-/** Input for a single (channel, locale) transcreation task. */
-export interface TranscreateInput {
-  source: BlogPost;
-  target: Target;
-}
-
-/** Structured transcreation output (before it is shaped into a `ChannelVariant`). */
+/**
+ * Structured transcreation output for a SINGLE locale (before it is shaped into a
+ * `ChannelVariant`). The batched calls below return one of these per locale.
+ */
 export interface TranscreateResult {
   /** Channel- and locale-appropriate copy, including the required disclaimer. */
   formattedText: string;
@@ -47,15 +44,10 @@ export interface TranscreateResult {
   hashtags: string[];
 }
 
-/** Input for a single variant fact-check task. */
-export interface FactCheckInput {
-  source: BlogPost;
-  variant: ChannelVariant;
-}
-
 /**
- * Raw reasoning output of the fact-check. The deterministic disclaimer backstop and
- * pass/flag gating live in `factcheck.ts` (our app owns governance, not the model).
+ * Raw reasoning output of the fact-check for a SINGLE locale. The deterministic
+ * disclaimer backstop and pass/flag gating live in `factcheck.ts` (our app owns
+ * governance, not the model).
  */
 export interface FactCheckReasoning {
   /** Medical/statistical claims in the variant NOT supported by the source blog. */
@@ -66,12 +58,86 @@ export interface FactCheckReasoning {
   reasoning: string;
 }
 
-/** The deep-reasoning service contract that Eve (or the AI SDK) implements. */
+/**
+ * Input for a BATCHED transcreation task: one channel, all requested locales, in a
+ * single reasoning call. Batching collapses the per-locale fan-out (3 calls → 1) so
+ * the pipeline fits under the webhook's `maxDuration` even on rate-limited free tiers.
+ */
+export interface TranscreateChannelInput {
+  source: BlogPost;
+  channel: Channel;
+  locales: readonly Locale[];
+}
+
+/** Batched transcreation output: one `TranscreateResult` per locale, keyed by code. */
+export interface TranscreateChannelResult {
+  byLocale: Partial<Record<Locale, TranscreateResult>>;
+}
+
+/**
+ * Input for a BATCHED fact-check task: all locale variants of ONE channel checked in a
+ * single reasoning call. `variants` share a channel and differ only by locale.
+ */
+export interface FactCheckChannelInput {
+  source: BlogPost;
+  variants: ChannelVariant[];
+}
+
+/** Batched fact-check output: one `FactCheckReasoning` per locale, keyed by code. */
+export interface FactCheckChannelResult {
+  byLocale: Partial<Record<Locale, FactCheckReasoning>>;
+}
+
+/**
+ * Input for a WHOLE-MATRIX transcreation task: every channel × every locale produced in
+ * a SINGLE reasoning call. This is the most aggressive batching (9 → 1 call) and is what
+ * the pipeline uses so it fits comfortably under the webhook timeout even when the
+ * free-tier Gateway rate-limits the first request hard.
+ */
+export interface TranscreateMatrixInput {
+  source: BlogPost;
+  channels: readonly Channel[];
+  locales: readonly Locale[];
+}
+
+/** Whole-matrix transcreation output: channel → locale → per-locale result. */
+export interface TranscreateMatrixResult {
+  byChannel: Partial<Record<Channel, Partial<Record<Locale, TranscreateResult>>>>;
+}
+
+/** Input for a WHOLE-MATRIX fact-check: all variants (any channel/locale) in one call. */
+export interface FactCheckMatrixInput {
+  source: BlogPost;
+  variants: ChannelVariant[];
+}
+
+/** Whole-matrix fact-check output: channel → locale → per-locale reasoning. */
+export interface FactCheckMatrixResult {
+  byChannel: Partial<Record<Channel, Partial<Record<Locale, FactCheckReasoning>>>>;
+}
+
+/**
+ * The deep-reasoning service contract that Eve (or the AI SDK) implements.
+ *
+ * All methods are BATCHED to minimize Vercel AI Gateway calls (the free tier
+ * rate-limits hard, and each extra call risks blowing the webhook's `maxDuration`):
+ *   - `transcreateChannel` / `factCheckChannel` — one call per channel (all locales),
+ *     i.e. the full matrix in ~6 calls. Useful for finer-grained callers.
+ *   - `transcreateMatrix` / `factCheckMatrix` — the ENTIRE channel × locale matrix in a
+ *     SINGLE call each (~2 calls total). This is what the pipeline uses to stay well
+ *     under 300s. Both paths share the same per-locale schemas/quality.
+ */
 export interface ReasoningService {
   /** Identifier for logs/observability, e.g. "eve" or "aisdk". */
   readonly name: string;
-  transcreate(input: TranscreateInput): Promise<TranscreateResult>;
-  factCheck(input: FactCheckInput): Promise<FactCheckReasoning>;
+  /** Transcreate ONE channel into ALL requested locales in a single call. */
+  transcreateChannel(input: TranscreateChannelInput): Promise<TranscreateChannelResult>;
+  /** Fact-check ALL locale variants of ONE channel in a single call. */
+  factCheckChannel(input: FactCheckChannelInput): Promise<FactCheckChannelResult>;
+  /** Transcreate the ENTIRE channel × locale matrix in a SINGLE call. */
+  transcreateMatrix(input: TranscreateMatrixInput): Promise<TranscreateMatrixResult>;
+  /** Fact-check the ENTIRE set of variants (all channels/locales) in a SINGLE call. */
+  factCheckMatrix(input: FactCheckMatrixInput): Promise<FactCheckMatrixResult>;
 }
 
 /* ── Shared reasoning schemas + prompt construction (used by the AI SDK path) ─ */
@@ -93,20 +159,53 @@ const factCheckSchema = z.object({
   reasoning: z.string().describe("Short explanation of the assessment."),
 });
 
+/**
+ * Build a batched schema whose top-level keys are locale codes, each mapping to the
+ * per-locale schema (`variantSchema` or `factCheckSchema`). This lets ONE structured
+ * response carry all locales for a channel while keeping each locale's fields intact.
+ */
+function byLocaleSchema<T extends z.ZodTypeAny>(
+  element: T,
+  locales: readonly Locale[],
+  description: (locale: Locale) => string,
+): z.ZodObject<Record<Locale, T>> {
+  const shape = Object.fromEntries(
+    locales.map((l) => [l, element.describe(description(l))]),
+  ) as Record<Locale, T>;
+  return z.object(shape);
+}
+
+/**
+ * Build a nested batched schema: channel code → locale code → per-locale schema. Lets a
+ * SINGLE structured response carry the whole channel × locale matrix while keeping each
+ * cell's fields intact.
+ */
+function byChannelLocaleSchema<T extends z.ZodTypeAny>(
+  element: T,
+  channels: readonly Channel[],
+  locales: readonly Locale[],
+  description: (channel: Channel, locale: Locale) => string,
+): z.ZodObject<Record<Channel, z.ZodObject<Record<Locale, T>>>> {
+  const shape = Object.fromEntries(
+    channels.map((c) => {
+      const localeShape = Object.fromEntries(
+        locales.map((l) => [l, element.describe(description(c, l))]),
+      ) as Record<Locale, T>;
+      return [c, z.object(localeShape).describe(`All locales for the "${c}" channel.`)];
+    }),
+  ) as Record<Channel, z.ZodObject<Record<Locale, T>>>;
+  return z.object(shape);
+}
+
 const LOCALE_NAMES: Record<Locale, string> = {
   en: "English",
   es: "Spanish (es)",
   fr: "French (fr)",
 };
 
-function buildTranscreatePrompt(
-  source: BlogPost,
-  target: Target,
-): { system: string; prompt: string } {
-  const style = BRAND_KIT.channelStyle[target.channel];
-  const disclaimer = requiredDisclaimer(target.locale);
-
-  const system = [
+/** Shared brand/compliance grounding for the transcreation system prompt. */
+function transcreateSystemPrompt(): string {
+  return [
     `You are the content-distribution agent for ${BRAND_KIT.brandName}, a health system.`,
     `Brand tone: ${BRAND_KIT.voice.tone}`,
     `Personality: ${BRAND_KIT.voice.personality.join(", ")}.`,
@@ -117,9 +216,32 @@ function buildTranscreatePrompt(
     ...BRAND_KIT.compliance.claimGuidance.map((g) => `- ${g}`),
     `- Never make these claims: ${BRAND_KIT.compliance.prohibitedClaims.join(" | ")}`,
     ``,
-    `You TRANSCREATE: adapt the message, tone, idioms and CTA to the target language and`,
+    `You TRANSCREATE: adapt the message, tone, idioms and CTA to each target language and`,
     `culture. Do NOT translate literally. Never introduce medical facts absent from the source.`,
   ].join("\n");
+}
+
+/**
+ * Prompt for a BATCHED transcreation: one channel, all requested locales in a single
+ * response. Each locale is transcreated independently (tone/culture-adapted, disclaimer
+ * included) — quality-equivalent to the old per-locale calls, but in one Gateway round-trip.
+ */
+function buildChannelTranscreatePrompt(
+  source: BlogPost,
+  channel: Channel,
+  locales: readonly Locale[],
+): { system: string; prompt: string } {
+  const style = BRAND_KIT.channelStyle[channel];
+
+  const localeBlocks = locales
+    .map((locale) =>
+      [
+        `- "${locale}" (${LOCALE_NAMES[locale]}): write ALL copy in ${LOCALE_NAMES[locale]}, tone- and`,
+        `  culture-adapted for this locale (NOT a literal translation of another locale). You MUST`,
+        `  include this exact required disclaimer (or a faithful equivalent): "${requiredDisclaimer(locale)}"`,
+      ].join("\n"),
+    )
+    .join("\n");
 
   const prompt = [
     `SOURCE BLOG POST (authored in English):`,
@@ -127,34 +249,44 @@ function buildTranscreatePrompt(
     source.summary ? `Summary: ${source.summary}` : ``,
     `Body:\n${source.body}`,
     ``,
-    `TARGET CHANNEL: ${target.channel}`,
+    `TARGET CHANNEL: ${channel}`,
     `Channel style: ${style.notes}`,
     `Max characters: ${style.maxChars}. Hashtags: between ${style.hashtagCount[0]} and ${style.hashtagCount[1]}.`,
     ``,
-    `TARGET LOCALE: ${LOCALE_NAMES[target.locale]}`,
-    `Write ALL copy in ${LOCALE_NAMES[target.locale]}.`,
-    `You MUST include this exact required disclaimer (or a faithful equivalent) in the copy:`,
-    `"${disclaimer}"`,
+    `Produce a SEPARATE, independently transcreated post for EACH of these locales:`,
+    localeBlocks,
     ``,
-    `Return the post copy and hashtags (hashtags without the leading #).`,
+    `Return an object with one key per locale code (${locales.join(", ")}). Each value has the`,
+    `post copy and hashtags (hashtags without the leading #).`,
   ]
     .filter(Boolean)
     .join("\n");
 
-  return { system, prompt };
+  return { system: transcreateSystemPrompt(), prompt };
 }
 
-function buildFactCheckPrompt(
+/**
+ * Prompt for a BATCHED fact-check: all locale variants of ONE channel assessed in a
+ * single response. Each locale is assessed independently against the source blog.
+ */
+function buildChannelFactCheckPrompt(
   source: BlogPost,
-  variant: ChannelVariant,
+  variants: ChannelVariant[],
 ): { system: string; prompt: string } {
+  const channel = variants[0]?.channel;
+
   const system = [
     `You are a healthcare compliance fact-checker for ${BRAND_KIT.brandName}.`,
-    `You compare a generated social post against its SOURCE blog post.`,
-    `Flag any medical or statistical claim in the post that is not explicitly supported by the source.`,
+    `You compare generated social posts against their SOURCE blog post.`,
+    `Flag any medical or statistical claim in a post that is not explicitly supported by the source.`,
     `Also flag any of these prohibited claims if present: ${BRAND_KIT.compliance.prohibitedClaims.join(" | ")}`,
     `Be strict: invented efficacy numbers, study citations, or guarantees are unsupported.`,
+    `Assess EACH locale's post independently.`,
   ].join("\n");
+
+  const variantBlocks = variants
+    .map((v) => `--- LOCALE "${v.locale}" (${LOCALE_NAMES[v.locale]}) ---\n${v.formattedText}`)
+    .join("\n\n");
 
   const prompt = [
     `SOURCE BLOG POST:`,
@@ -162,8 +294,110 @@ function buildFactCheckPrompt(
     `Body:\n${source.body}`,
     source.keyClaims?.length ? `Author-declared supported claims: ${source.keyClaims.join("; ")}` : ``,
     ``,
-    `GENERATED POST (${variant.channel} / ${variant.locale}):`,
-    variant.formattedText,
+    `GENERATED POSTS for channel "${channel}", one per locale (assess each independently):`,
+    ``,
+    variantBlocks,
+    ``,
+    `Return an object with one key per locale code (${variants.map((v) => v.locale).join(", ")}).`,
+    `Each value has unsupportedClaims, prohibitedClaimsFound, and reasoning for THAT locale's post.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return { system, prompt };
+}
+
+/**
+ * Prompt for a WHOLE-MATRIX transcreation: EVERY channel × EVERY locale in one response.
+ * Each cell is independently tone/culture-adapted with its locale's required disclaimer —
+ * same per-cell quality as the granular calls, but in a single Gateway round-trip.
+ */
+function buildMatrixTranscreatePrompt(
+  source: BlogPost,
+  channels: readonly Channel[],
+  locales: readonly Locale[],
+): { system: string; prompt: string } {
+  const channelBlocks = channels
+    .map((channel) => {
+      const style = BRAND_KIT.channelStyle[channel];
+      return `- "${channel}": ${style.notes} Max characters: ${style.maxChars}. Hashtags: between ${style.hashtagCount[0]} and ${style.hashtagCount[1]}.`;
+    })
+    .join("\n");
+
+  const localeBlocks = locales
+    .map(
+      (locale) =>
+        `- "${locale}" (${LOCALE_NAMES[locale]}): write ALL copy natively in ${LOCALE_NAMES[locale]}, tone- and culture-adapted (NOT a literal translation). Include this exact required disclaimer (or a faithful equivalent): "${requiredDisclaimer(locale)}"`,
+    )
+    .join("\n");
+
+  const prompt = [
+    `SOURCE BLOG POST (authored in English):`,
+    `Title: ${source.title}`,
+    source.summary ? `Summary: ${source.summary}` : ``,
+    `Body:\n${source.body}`,
+    ``,
+    `Produce a SEPARATE, independently transcreated post for EVERY combination of the`,
+    `following channels and locales.`,
+    ``,
+    `CHANNELS (apply each channel's style):`,
+    channelBlocks,
+    ``,
+    `LOCALES:`,
+    localeBlocks,
+    ``,
+    `Return an object keyed by channel code (${channels.join(", ")}). Each channel's value`,
+    `is an object keyed by locale code (${locales.join(", ")}); each of those has the post`,
+    `copy and hashtags (hashtags without the leading #).`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return { system: transcreateSystemPrompt(), prompt };
+}
+
+/**
+ * Prompt for a WHOLE-MATRIX fact-check: all generated posts (every channel/locale) checked
+ * in one response, each assessed independently against the source blog.
+ */
+function buildMatrixFactCheckPrompt(
+  source: BlogPost,
+  variants: ChannelVariant[],
+): { system: string; prompt: string } {
+  const system = [
+    `You are a healthcare compliance fact-checker for ${BRAND_KIT.brandName}.`,
+    `You compare generated social posts against their SOURCE blog post.`,
+    `Flag any medical or statistical claim in a post that is not explicitly supported by the source.`,
+    `Also flag any of these prohibited claims if present: ${BRAND_KIT.compliance.prohibitedClaims.join(" | ")}`,
+    `Be strict: invented efficacy numbers, study citations, or guarantees are unsupported.`,
+    `Assess EACH channel/locale post independently.`,
+  ].join("\n");
+
+  // Group posts by channel for a readable prompt.
+  const channels = [...new Set(variants.map((v) => v.channel))];
+  const postBlocks = channels
+    .map((channel) => {
+      const localeBlocks = variants
+        .filter((v) => v.channel === channel)
+        .map((v) => `--- LOCALE "${v.locale}" (${LOCALE_NAMES[v.locale]}) ---\n${v.formattedText}`)
+        .join("\n\n");
+      return `### CHANNEL "${channel}"\n${localeBlocks}`;
+    })
+    .join("\n\n");
+
+  const prompt = [
+    `SOURCE BLOG POST:`,
+    `Title: ${source.title}`,
+    `Body:\n${source.body}`,
+    source.keyClaims?.length ? `Author-declared supported claims: ${source.keyClaims.join("; ")}` : ``,
+    ``,
+    `GENERATED POSTS (assess each channel/locale independently):`,
+    ``,
+    postBlocks,
+    ``,
+    `Return an object keyed by channel code (${channels.join(", ")}). Each channel's value is`,
+    `an object keyed by locale code; each of those has unsupportedClaims,`,
+    `prohibitedClaimsFound, and reasoning for THAT post.`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -224,41 +458,157 @@ function resolveModel(): string {
 export class AiSdkReasoningService implements ReasoningService {
   readonly name = "aisdk";
 
-  async transcreate({ source, target }: TranscreateInput): Promise<TranscreateResult> {
-    const { system, prompt } = buildTranscreatePrompt(source, target);
+  async transcreateChannel({
+    source,
+    channel,
+    locales,
+  }: TranscreateChannelInput): Promise<TranscreateChannelResult> {
+    const { system, prompt } = buildChannelTranscreatePrompt(source, channel, locales);
+    const schema = byLocaleSchema(
+      variantSchema,
+      locales,
+      (l) => `Transcreated post copy + hashtags for the "${l}" locale.`,
+    );
     const { object } = await withRateLimitRetry(() =>
       generateObject({
         model: resolveModel(),
-        schema: variantSchema,
-        schemaName: "ChannelVariant",
-        schemaDescription: "A single social post transcreated for one channel and locale.",
+        schema,
+        schemaName: "ChannelVariantsByLocale",
+        schemaDescription:
+          "Social posts for one channel, transcreated into each locale (one entry per locale code).",
         system,
         prompt,
       }),
     );
-    return {
-      formattedText: object.formattedText,
-      hashtags: object.hashtags.map((h) => h.replace(/^#/, "")),
-    };
+    const byLocale: Partial<Record<Locale, TranscreateResult>> = {};
+    for (const locale of locales) {
+      const draft = object[locale];
+      if (!draft) continue;
+      byLocale[locale] = {
+        formattedText: draft.formattedText,
+        hashtags: draft.hashtags.map((h) => h.replace(/^#/, "")),
+      };
+    }
+    return { byLocale };
   }
 
-  async factCheck({ source, variant }: FactCheckInput): Promise<FactCheckReasoning> {
-    const { system, prompt } = buildFactCheckPrompt(source, variant);
+  async factCheckChannel({
+    source,
+    variants,
+  }: FactCheckChannelInput): Promise<FactCheckChannelResult> {
+    const locales = variants.map((v) => v.locale);
+    const { system, prompt } = buildChannelFactCheckPrompt(source, variants);
+    const schema = byLocaleSchema(
+      factCheckSchema,
+      locales,
+      (l) => `Fact-check assessment for the "${l}" locale's post.`,
+    );
     const { object } = await withRateLimitRetry(() =>
       generateObject({
         model: resolveModel(),
-        schema: factCheckSchema,
-        schemaName: "FactCheck",
-        schemaDescription: "Assessment of whether a social variant is supported by its source.",
+        schema,
+        schemaName: "FactCheckByLocale",
+        schemaDescription:
+          "Support assessment for one channel's posts, one entry per locale code.",
         system,
         prompt,
       }),
     );
-    return {
-      unsupportedClaims: object.unsupportedClaims,
-      prohibitedClaimsFound: object.prohibitedClaimsFound,
-      reasoning: object.reasoning,
-    };
+    const byLocale: Partial<Record<Locale, FactCheckReasoning>> = {};
+    for (const locale of locales) {
+      const assessment = object[locale];
+      if (!assessment) continue;
+      byLocale[locale] = {
+        unsupportedClaims: assessment.unsupportedClaims,
+        prohibitedClaimsFound: assessment.prohibitedClaimsFound,
+        reasoning: assessment.reasoning,
+      };
+    }
+    return { byLocale };
+  }
+
+  async transcreateMatrix({
+    source,
+    channels,
+    locales,
+  }: TranscreateMatrixInput): Promise<TranscreateMatrixResult> {
+    const { system, prompt } = buildMatrixTranscreatePrompt(source, channels, locales);
+    const schema = byChannelLocaleSchema(
+      variantSchema,
+      channels,
+      locales,
+      (c, l) => `Transcreated post copy + hashtags for channel "${c}", locale "${l}".`,
+    );
+    const { object } = await withRateLimitRetry(() =>
+      generateObject({
+        model: resolveModel(),
+        schema,
+        schemaName: "ChannelVariantsMatrix",
+        schemaDescription:
+          "Social posts for every channel × locale (channel code → locale code → post).",
+        system,
+        prompt,
+      }),
+    );
+    const byChannel: TranscreateMatrixResult["byChannel"] = {};
+    for (const channel of channels) {
+      const localeMap = object[channel];
+      if (!localeMap) continue;
+      const byLocale: Partial<Record<Locale, TranscreateResult>> = {};
+      for (const locale of locales) {
+        const draft = localeMap[locale];
+        if (!draft) continue;
+        byLocale[locale] = {
+          formattedText: draft.formattedText,
+          hashtags: draft.hashtags.map((h) => h.replace(/^#/, "")),
+        };
+      }
+      byChannel[channel] = byLocale;
+    }
+    return { byChannel };
+  }
+
+  async factCheckMatrix({
+    source,
+    variants,
+  }: FactCheckMatrixInput): Promise<FactCheckMatrixResult> {
+    const channels = [...new Set(variants.map((v) => v.channel))];
+    const locales = [...new Set(variants.map((v) => v.locale))];
+    const { system, prompt } = buildMatrixFactCheckPrompt(source, variants);
+    const schema = byChannelLocaleSchema(
+      factCheckSchema,
+      channels,
+      locales,
+      (c, l) => `Fact-check assessment for channel "${c}", locale "${l}".`,
+    );
+    const { object } = await withRateLimitRetry(() =>
+      generateObject({
+        model: resolveModel(),
+        schema,
+        schemaName: "FactCheckMatrix",
+        schemaDescription:
+          "Support assessment for every channel × locale (channel code → locale code → assessment).",
+        system,
+        prompt,
+      }),
+    );
+    const byChannel: FactCheckMatrixResult["byChannel"] = {};
+    for (const channel of channels) {
+      const localeMap = object[channel];
+      if (!localeMap) continue;
+      const byLocale: Partial<Record<Locale, FactCheckReasoning>> = {};
+      for (const locale of locales) {
+        const assessment = localeMap[locale];
+        if (!assessment) continue;
+        byLocale[locale] = {
+          unsupportedClaims: assessment.unsupportedClaims,
+          prohibitedClaimsFound: assessment.prohibitedClaimsFound,
+          reasoning: assessment.reasoning,
+        };
+      }
+      byChannel[channel] = byLocale;
+    }
+    return { byChannel };
   }
 }
 
@@ -295,15 +645,33 @@ export class EveReasoningService implements ReasoningService {
 
   constructor(private readonly config: EveConfig) {}
 
-  transcreate(input: TranscreateInput): Promise<TranscreateResult> {
-    return this.invoke<TranscreateResult>("transcreate", input);
+  // NOTE: mirrors the BATCHED `ReasoningService` contract — one call per channel covers
+  // all locales. The eve agent's HTTP channel would run the same batched reasoning and
+  // return a `{ byLocale }` envelope. Payload/response shapes remain a TODO (see above).
+  transcreateChannel(input: TranscreateChannelInput): Promise<TranscreateChannelResult> {
+    return this.invoke<TranscreateChannelResult>("transcreateChannel", input);
   }
 
-  factCheck(input: FactCheckInput): Promise<FactCheckReasoning> {
-    return this.invoke<FactCheckReasoning>("factCheck", input);
+  factCheckChannel(input: FactCheckChannelInput): Promise<FactCheckChannelResult> {
+    return this.invoke<FactCheckChannelResult>("factCheckChannel", input);
   }
 
-  private async invoke<T>(task: "transcreate" | "factCheck", input: unknown): Promise<T> {
+  transcreateMatrix(input: TranscreateMatrixInput): Promise<TranscreateMatrixResult> {
+    return this.invoke<TranscreateMatrixResult>("transcreateMatrix", input);
+  }
+
+  factCheckMatrix(input: FactCheckMatrixInput): Promise<FactCheckMatrixResult> {
+    return this.invoke<FactCheckMatrixResult>("factCheckMatrix", input);
+  }
+
+  private async invoke<T>(
+    task:
+      | "transcreateChannel"
+      | "factCheckChannel"
+      | "transcreateMatrix"
+      | "factCheckMatrix",
+    input: unknown,
+  ): Promise<T> {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (this.config.triggerSecret) {
       headers.authorization = `Bearer ${this.config.triggerSecret}`;
