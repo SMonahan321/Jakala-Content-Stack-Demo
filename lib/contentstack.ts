@@ -183,6 +183,60 @@ export async function getChannelVariantsForBlog(
   return deduped;
 }
 
+/**
+ * Find the source Blog Post that has the MOST RECENTLY created/updated Channel
+ * Variant entries, and return its uid. Powers `/preview`'s auto-follow behavior:
+ * when no `BLOG_ENTRY_UID` override is set, the page shows whichever blog most
+ * recently had variants generated (e.g. right after a new post is published and
+ * the webhook fans it out).
+ *
+ * Queries the master locale's `channel_variant` entries (every variant has a
+ * master entry), orders them by most-recent timestamp, and returns the
+ * `source_blog` uid of the newest one. Returns `null` when there are no variants
+ * at all — callers should then fall back to their default / sample data.
+ *
+ * Only runs when creds are present (`getStack` throws otherwise); preview-page
+ * callers catch any failure and fall back to the fixture.
+ */
+export async function getLatestBlogWithVariants(): Promise<string | null> {
+  const stack = getStack();
+  const masterLocale = await getMasterLocale();
+
+  const items: RawVariantEntry[] = [];
+  const pageSize = 100;
+  for (let skip = 0; ; skip += pageSize) {
+    const res = (await stack
+      .contentType(CHANNEL_VARIANT_CONTENT_TYPE)
+      .entry()
+      .query({ locale: masterLocale, include_count: false, limit: pageSize, skip })
+      .find()) as unknown as { items?: RawVariantEntry[] };
+    const page = res.items ?? [];
+    items.push(...page);
+    if (page.length < pageSize) break;
+  }
+
+  // Most-recent first, then return the newest entry's referenced blog uid.
+  items.sort((a, b) => updatedAtMs(b) - updatedAtMs(a));
+  for (const item of items) {
+    const blogUid = sourceBlogUid(item.source_blog);
+    if (blogUid) return blogUid;
+  }
+  return null;
+}
+
+/** Extract the referenced Blog Post uid from a `source_blog` reference value. */
+function sourceBlogUid(source: unknown): string | null {
+  const refs = Array.isArray(source) ? source : source == null ? [] : [source];
+  for (const ref of refs) {
+    if (typeof ref === "string" && ref) return ref;
+    if (ref && typeof ref === "object" && "uid" in ref) {
+      const uid = (ref as { uid?: string }).uid;
+      if (uid) return uid;
+    }
+  }
+  return null;
+}
+
 /** Best-effort parse of an entry's `updated_at` timestamp into epoch ms (0 if absent). */
 function updatedAtMs(item: RawVariantEntry): number {
   const raw = item.updated_at;

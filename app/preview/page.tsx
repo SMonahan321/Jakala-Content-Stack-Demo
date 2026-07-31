@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { getChannelVariantsForBlog } from "@/lib/contentstack";
+import { getChannelVariantsForBlog, getLatestBlogWithVariants } from "@/lib/contentstack";
 import { SAMPLE_BLOG, sampleVariantsByChannel } from "@/lib/sample-data";
 import { CHANNELS } from "@/lib/types";
 import type { Channel, ChannelVariant, Locale } from "@/lib/types";
@@ -11,8 +11,13 @@ import type { Channel, ChannelVariant, Locale } from "@/lib/types";
  */
 export const dynamic = "force-dynamic";
 
-/** Source Blog Post whose channel variants we render. Overridable via env. */
-const BLOG_ENTRY_UID = process.env.BLOG_ENTRY_UID ?? "blt91d3f8fb1f5ee359";
+/**
+ * Explicit override for the source Blog Post whose channel variants we render.
+ * When UNSET (the default), the page auto-follows whichever blog most recently had
+ * `channel_variant` entries created — so a freshly published post's variants show up
+ * without redeploying. Set `BLOG_ENTRY_UID` to pin the preview to a specific blog.
+ */
+const BLOG_ENTRY_UID_OVERRIDE = process.env.BLOG_ENTRY_UID;
 
 type PreviewData = {
   source: "live" | "sample";
@@ -45,13 +50,18 @@ function groupByChannel(variants: ChannelVariant[]): Record<Channel, ChannelVari
  */
 async function loadPreviewData(): Promise<PreviewData> {
   try {
-    const variants = await getChannelVariantsForBlog(BLOG_ENTRY_UID);
-    if (variants.length > 0) {
-      return {
-        source: "live",
-        blogTitle: `Live entry ${BLOG_ENTRY_UID}`,
-        byChannel: groupByChannel(variants),
-      };
+    // Honor an explicit override; otherwise auto-follow the blog whose channel
+    // variants were most recently created/updated (null when none exist yet).
+    const blogUid = BLOG_ENTRY_UID_OVERRIDE ?? (await getLatestBlogWithVariants());
+    if (blogUid) {
+      const variants = await getChannelVariantsForBlog(blogUid);
+      if (variants.length > 0) {
+        return {
+          source: "live",
+          blogTitle: `Live entry ${blogUid}`,
+          byChannel: groupByChannel(variants),
+        };
+      }
     }
   } catch {
     // Swallow and fall back to the fixture below.
