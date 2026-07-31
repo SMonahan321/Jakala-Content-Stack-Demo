@@ -22,7 +22,10 @@ Management API content-type shape and can be created in three ways.
 **Channel Variant (`channel_variant`)**: `title`, `channel` (enum: `linkedin|x|instagram`),
 `formatted_text`, `hashtags[]`, `char_count`, `image_crop_spec` (JSON string),
 `status` (enum: `generated|needs_review|flagged|approved|published`),
-`source_blog` (reference → `blog_post`).
+`source_blog` (reference → `blog_post`), plus the fact-check result surfaced on each
+entry: `fact_check_passed` (boolean), `disclaimer_present` (boolean),
+`unsupported_claims[]` (text), `fact_check_notes` (multiline text). These four are
+optional (`mandatory: false`) so existing entries stay valid.
 
 ## Locales
 

@@ -547,6 +547,12 @@ function toEntryData(variant: ChannelVariant): { title: string } & Record<string
     source_blog: [
       { uid: variant.sourceBlogUid, _content_type_uid: BLOG_POST_CONTENT_TYPE },
     ],
+    // Surface the fact-check verdict on the entry itself (Option A). Defensive when
+    // fact-check hasn't run yet: booleans default false, list/notes default empty.
+    fact_check_passed: variant.factCheck?.pass ?? false,
+    disclaimer_present: variant.factCheck?.disclaimerPresent ?? false,
+    unsupported_claims: variant.factCheck?.unsupportedClaims ?? [],
+    fact_check_notes: (variant.factCheck?.reasons ?? []).join("\n"),
   };
 }
 
@@ -561,6 +567,10 @@ interface RawVariantEntry {
   image_crop_spec?: string | null;
   status?: string;
   source_blog?: unknown;
+  fact_check_passed?: boolean | null;
+  disclaimer_present?: boolean | null;
+  unsupported_claims?: string[] | null;
+  fact_check_notes?: string | null;
   updated_at?: string;
   [key: string]: unknown;
 }

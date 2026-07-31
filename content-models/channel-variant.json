@@ -88,6 +88,35 @@
         "mandatory": true,
         "reference_to": ["blog_post"],
         "field_metadata": { "ref_multiple": false, "description": "Reference back to the source Blog Post." }
+      },
+      {
+        "display_name": "Fact-Check Passed",
+        "uid": "fact_check_passed",
+        "data_type": "boolean",
+        "mandatory": false,
+        "field_metadata": { "description": "True if all claims are supported and the disclaimer is present." }
+      },
+      {
+        "display_name": "Disclaimer Present",
+        "uid": "disclaimer_present",
+        "data_type": "boolean",
+        "mandatory": false,
+        "field_metadata": { "description": "True if the required localized disclaimer was detected." }
+      },
+      {
+        "display_name": "Unsupported / Prohibited Claims",
+        "uid": "unsupported_claims",
+        "data_type": "text",
+        "multiple": true,
+        "mandatory": false,
+        "field_metadata": { "description": "Claims flagged as unsupported by the source or brand-prohibited." }
+      },
+      {
+        "display_name": "Fact-Check Notes",
+        "uid": "fact_check_notes",
+        "data_type": "text",
+        "mandatory": false,
+        "field_metadata": { "multiline": true, "description": "Human-readable fact-check reasoning / result summary." }
       }
     ]
   }
