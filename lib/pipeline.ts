@@ -11,7 +11,9 @@
  *   1. read the source Blog Post (+ its author-declared claims),
  *   2. transcreate × {linkedin,x,instagram} × {en(=master),es,fr} via the reasoning seam,
  *   3. fact-check each variant (claims supported? disclaimer present?),
- *   4. write one Channel Variant master entry per channel and localize it into es/fr,
+ *   4. UPSERT one Channel Variant master entry per channel (keyed on the composite
+ *      (source_blog reference, channel)) and localize it into es/fr — re-runs update
+ *      the existing masters in place instead of creating duplicates,
  *   5. move the Blog Post into the human review gate (soft-skips if no workflow exists).
  *
  * Slack is intentionally NOT called here — that fires only on human approval.
@@ -56,7 +58,8 @@ export async function runPipeline(entryUid: string): Promise<PipelineResult> {
     applyFactCheck(variant, results[i]),
   );
 
-  // 4. Write back to Contentstack: one master entry per channel across en/es/fr.
+  // 4. Write back to Contentstack: UPSERT one master entry per channel across en/es/fr.
+  //    Keyed on (source_blog reference, channel) so re-runs update in place (no dupes).
   const writtenEntryUids: Record<string, string> = {};
   for (const channel of CHANNELS as readonly Channel[]) {
     const channelVariants = reviewed.filter((v) => v.channel === channel);

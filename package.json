@@ -14,7 +14,8 @@
     "sync:locales": "tsx scripts/sync-locales.ts",
     "sync:webhook": "tsx scripts/sync-webhook.ts",
     "seed:blog": "tsx scripts/seed-blog-post.ts",
-    "run:pipeline": "tsx scripts/run-pipeline.ts"
+    "run:pipeline": "tsx scripts/run-pipeline.ts",
+    "cleanup:variants": "tsx scripts/cleanup-variants.ts"
   },
   "dependencies": {
     "@contentstack/management": "^1.30.4",

@@ -157,14 +157,40 @@ export async function getChannelVariantsForBlog(
       .query({ locale: stackLocale, include_count: false, limit: 100 })
       .find()) as unknown as { items?: RawVariantEntry[] };
 
-    for (const item of res.items ?? []) {
+    // Order by most-recent first so the dedupe below keeps the freshest entry.
+    const items = [...(res.items ?? [])].sort(
+      (a, b) => updatedAtMs(b) - updatedAtMs(a),
+    );
+
+    for (const item of items) {
       if (!referencesBlog(item.source_blog, blogUid)) continue;
       const mapped = mapVariantEntry(item, locale, blogUid);
       if (mapped) variants.push(mapped);
     }
   }
 
-  return variants;
+  // Safety net: collapse any stray duplicates to one variant per (channel, locale),
+  // keeping the most-recent (already ordered above) so a future dupe can't break the
+  // preview grid. This does not change behavior when the write-back is a clean upsert.
+  const seen = new Set<string>();
+  const deduped: ChannelVariant[] = [];
+  for (const variant of variants) {
+    const key = `${variant.channel}::${variant.locale}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(variant);
+  }
+  return deduped;
+}
+
+/** Best-effort parse of an entry's `updated_at` timestamp into epoch ms (0 if absent). */
+function updatedAtMs(item: RawVariantEntry): number {
+  const raw = item.updated_at;
+  if (typeof raw === "string") {
+    const ms = Date.parse(raw);
+    return Number.isNaN(ms) ? 0 : ms;
+  }
+  return 0;
 }
 
 /** True when a `source_blog` reference value points at `blogUid`. */
@@ -232,12 +258,56 @@ function parseCropSpec(raw: unknown, channel: Channel): ImageCropSpec {
 }
 
 /**
+ * Deterministic master title for the (channel, blog) pair. The master (English)
+ * entry is always titled this way (see `toEntryData`), so it doubles as a stable
+ * upsert key alongside the `source_blog` reference + `channel` match.
+ */
+export function masterVariantTitle(channel: Channel, blogUid: string): string {
+  return `${channel} · en · ${blogUid}`;
+}
+
+/**
+ * Find the existing MASTER Channel Variant entry for a given (blog, channel) pair,
+ * if one exists. This is the key that makes the write-back an UPSERT instead of a
+ * blind create: it queries the master locale for `channel_variant` entries, keeps
+ * only those that reference `blogUid` AND target `channel`, and returns the uid of
+ * the deterministically-titled master (falling back to the first match). Returns
+ * `null` when no such entry exists yet (→ caller should CREATE).
+ */
+export async function findExistingVariantEntry(
+  blogUid: string,
+  channel: Channel,
+): Promise<string | null> {
+  const stack = getStack();
+  const masterLocale = await getMasterLocale();
+  const wantTitle = masterVariantTitle(channel, blogUid);
+
+  const matches: RawVariantEntry[] = [];
+  const pageSize = 100;
+  for (let skip = 0; ; skip += pageSize) {
+    const res = (await stack
+      .contentType(CHANNEL_VARIANT_CONTENT_TYPE)
+      .entry()
+      .query({ locale: masterLocale, include_count: false, limit: pageSize, skip })
+      .find()) as unknown as { items?: RawVariantEntry[] };
+    const items = res.items ?? [];
+    for (const item of items) {
+      if (item.channel !== channel) continue;
+      if (!referencesBlog(item.source_blog, blogUid)) continue;
+      matches.push(item);
+    }
+    if (items.length < pageSize) break;
+  }
+
+  if (matches.length === 0) return null;
+  // Prefer the deterministically-titled master; otherwise take the first match.
+  const preferred = matches.find((m) => m.title === wantTitle) ?? matches[0];
+  return preferred.uid ?? null;
+}
+
+/**
  * Create a Channel Variant entry in the master (English) locale.
  * Returns the created entry uid so es/fr localizations can be attached to it.
- *
- * TODO: reference field wiring — `source_blog` must be a reference to the Blog Post
- * entry ({ uid, _content_type_uid }); confirm the exact reference field shape once
- * the content type is created in your stack.
  */
 export async function createVariantEntry(variant: ChannelVariant): Promise<string> {
   const stack = getStack();
@@ -249,10 +319,13 @@ export async function createVariantEntry(variant: ChannelVariant): Promise<strin
 }
 
 /**
- * Attach a localized (es/fr) version of an existing Channel Variant entry.
- * Fetches the entry in the target locale, applies localized fields, and updates.
+ * Update an EXISTING Channel Variant entry in place, in a given locale. Fetches the
+ * entry in the target locale, overlays the mapped fields, and saves. Used by the
+ * upsert path to refresh the master entry (and its localizations) rather than
+ * creating duplicates. Preserves all managed fields (status, hashtags, crop spec,
+ * disclaimer-bearing copy) because they are re-derived from the reviewed variant.
  */
-export async function localizeVariantEntry(
+export async function updateVariantEntry(
   entryUid: string,
   variant: ChannelVariant,
 ): Promise<void> {
@@ -268,15 +341,40 @@ export async function localizeVariantEntry(
 }
 
 /**
- * Convenience: persist a set of variants that share one (channel) master entry
- * across en/es/fr. `variants` should be the same channel in all three locales.
- * The English variant becomes the master entry; es/fr are localized onto it.
+ * Attach (or refresh) a localized (es/fr) version of an existing Channel Variant
+ * entry. Fetches the entry in the target locale, applies localized fields, and
+ * updates. Shares the in-place update logic with `updateVariantEntry`.
+ */
+export async function localizeVariantEntry(
+  entryUid: string,
+  variant: ChannelVariant,
+): Promise<void> {
+  await updateVariantEntry(entryUid, variant);
+}
+
+/**
+ * Persist a set of variants that share one (channel) master entry across en/es/fr.
+ * `variants` should be the same channel in all three locales.
+ *
+ * UPSERT semantics keyed on the composite `(source_blog reference, channel)`:
+ *   - if a master `channel_variant` entry already exists for this (blog, channel),
+ *     UPDATE it in place and refresh its es/fr localizations;
+ *   - otherwise CREATE the master and localize es/fr onto it.
+ * Re-running the pipeline therefore keeps exactly one master per (blog, channel)
+ * instead of appending duplicates. The English variant is the master entry.
  */
 export async function persistChannelAcrossLocales(
   variants: ChannelVariant[],
 ): Promise<string> {
   const master = variants.find((v) => v.locale === "en") ?? variants[0];
-  const entryUid = await createVariantEntry(master);
+
+  const existingUid = await findExistingVariantEntry(master.sourceBlogUid, master.channel);
+  const entryUid = existingUid ?? (await createVariantEntry(master));
+  if (existingUid) {
+    // Refresh the master (English) entry in place.
+    await updateVariantEntry(entryUid, master);
+  }
+
   for (const variant of variants) {
     if (variant.locale === master.locale) continue;
     await localizeVariantEntry(entryUid, variant);
@@ -367,6 +465,7 @@ function toEntryData(variant: ChannelVariant): { title: string } & Record<string
 /** Minimal shape we read off a queried Channel Variant entry. */
 interface RawVariantEntry {
   uid?: string;
+  title?: string;
   channel?: string;
   formatted_text?: string;
   hashtags?: string[] | null;
@@ -374,6 +473,7 @@ interface RawVariantEntry {
   image_crop_spec?: string | null;
   status?: string;
   source_blog?: unknown;
+  updated_at?: string;
   [key: string]: unknown;
 }
 

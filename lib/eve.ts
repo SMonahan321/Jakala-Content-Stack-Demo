@@ -145,7 +145,13 @@ export interface ReasoningService {
 const variantSchema = z.object({
   formattedText: z
     .string()
-    .describe("The channel- and locale-appropriate post copy, including the required disclaimer."),
+    .describe(
+      "The channel- and locale-appropriate post copy. MUST include the required disclaimer AND " +
+        "must preserve the source's key audience and material benefits — in particular, if the " +
+        "source says the content helps older/elderly community members (seniors, older adults, " +
+        "grandparents), the copy must clearly convey that benefit, adapted in tone and within the " +
+        "character limit. Do not drop who it helps.",
+    ),
   hashtags: z.array(z.string()).describe("Relevant hashtags WITHOUT the leading # symbol."),
 });
 
@@ -216,6 +222,14 @@ function transcreateSystemPrompt(): string {
     ...BRAND_KIT.compliance.claimGuidance.map((g) => `- ${g}`),
     `- Never make these claims: ${BRAND_KIT.compliance.prohibitedClaims.join(" | ")}`,
     ``,
+    `PRESERVE THE SOURCE'S MEANING (hard rules — transcreation is non-literal, NOT lossy):`,
+    `- Keep the source's KEY AUDIENCE and MATERIAL BENEFITS. Never drop WHO the content helps or`,
+    `  the concrete benefit they get. Adapting tone/idioms/CTA is encouraged; dropping substance is not.`,
+    `- In particular, if the source says the content helps older or elderly members of the community`,
+    `  (older adults, seniors, grandparents, higher-risk elders), EVERY variant MUST clearly convey`,
+    `  that it helps older/elderly community members — phrased naturally for the channel and locale`,
+    `  and kept within the character limit. Do not paraphrase this benefit away.`,
+    ``,
     `You TRANSCREATE: adapt the message, tone, idioms and CTA to each target language and`,
     `culture. Do NOT translate literally. Never introduce medical facts absent from the source.`,
   ].join("\n");
@@ -252,6 +266,10 @@ function buildChannelTranscreatePrompt(
     `TARGET CHANNEL: ${channel}`,
     `Channel style: ${style.notes}`,
     `Max characters: ${style.maxChars}. Hashtags: between ${style.hashtagCount[0]} and ${style.hashtagCount[1]}.`,
+    ``,
+    `PRESERVE the source's key audience and material benefits — most importantly, if the source`,
+    `says the content helps older/elderly community members, EVERY locale's post must convey that`,
+    `benefit naturally and within the character limit (transcreate it; do not drop it).`,
     ``,
     `Produce a SEPARATE, independently transcreated post for EACH of these locales:`,
     localeBlocks,
@@ -339,6 +357,11 @@ function buildMatrixTranscreatePrompt(
     ``,
     `Produce a SEPARATE, independently transcreated post for EVERY combination of the`,
     `following channels and locales.`,
+    ``,
+    `PRESERVE the source's key audience and material benefits in EVERY cell — most importantly,`,
+    `if the source says the content helps older/elderly community members, every channel × locale`,
+    `post must convey that benefit naturally and within the character limit (transcreate it; do not`,
+    `drop it).`,
     ``,
     `CHANNELS (apply each channel's style):`,
     channelBlocks,
