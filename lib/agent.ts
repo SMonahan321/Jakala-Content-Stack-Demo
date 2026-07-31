@@ -14,6 +14,11 @@
  * shaping.
  */
 
+import {
+  BRAND_KIT,
+  conciseDisclaimer,
+  DISCLAIMER_CORE_PHRASE,
+} from "./brandkit";
 import { getReasoningService, type TranscreateResult } from "./eve";
 import {
   CHANNELS,
@@ -113,14 +118,84 @@ function draftToVariant(
   target: Target,
   draft: TranscreateResult,
 ): ChannelVariant {
+  // Deterministic guardrail so no variant exceeds its channel limit "in the first place".
+  const formattedText = enforceChannelCharLimit(
+    draft.formattedText,
+    target.channel,
+    target.locale,
+  );
   return {
     channel: target.channel,
     locale: target.locale,
-    formattedText: draft.formattedText,
+    formattedText,
     hashtags: draft.hashtags.map((h) => h.replace(/^#/, "")),
-    charCount: draft.formattedText.length,
+    // char_count reflects the FINAL (possibly compressed) text.
+    charCount: formattedText.length,
     imageCropSpec: CROP_SPECS[target.channel],
     status: "generated",
     sourceBlogUid: source.uid,
   };
+}
+
+/** Accent-insensitive, whitespace-collapsed normalization (mirrors factcheck.ts). */
+function normalizeForMatch(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Deterministic char-limit guardrail. The batched (1–2 call) rate-limited design can't
+ * afford a per-variant re-gen fan-out, so if the model overshoots a channel's `maxChars`
+ * we compress the copy IN-PROCESS rather than re-asking the Gateway. The disclaimer is
+ * never dropped:
+ *   1. If already within the limit, return unchanged.
+ *   2. Otherwise collapse whitespace; if that alone fits, done.
+ *   3. Otherwise replace the (long) disclaimer sentence with the locale's CONCISE
+ *      disclaimer (still contains the core recognizable phrase), then trim the BODY
+ *      wording — never the disclaimer — to fit, keeping the disclaimer sentence intact.
+ * Hashtags live in a separate field, so they are preserved untouched.
+ */
+export function enforceChannelCharLimit(
+  text: string,
+  channel: Channel,
+  locale: Locale,
+): string {
+  const limit = BRAND_KIT.channelStyle[channel].maxChars;
+  if (text.length <= limit) return text;
+
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= limit) return collapsed;
+
+  const disclaimer = conciseDisclaimer(locale);
+  const core = normalizeForMatch(DISCLAIMER_CORE_PHRASE[locale]);
+
+  // Split into sentences (keep it simple/robust) and locate the disclaimer sentence.
+  const sentences = collapsed.match(/[^.!?]+[.!?]*/g)?.map((s) => s.trim()).filter(Boolean) ?? [
+    collapsed,
+  ];
+  const discIdx = sentences.findIndex((s) => normalizeForMatch(s).includes(core));
+  const body = (discIdx >= 0 ? sentences.filter((_, i) => i !== discIdx) : sentences)
+    .join(" ")
+    .trim();
+
+  const separator = body ? " " : "";
+  const budget = limit - disclaimer.length - separator.length;
+  // Pathological: even the concise disclaimer alone exceeds the limit — return it trimmed.
+  if (budget <= 0) return disclaimer.slice(0, limit);
+
+  let trimmedBody = body;
+  if (trimmedBody.length > budget) {
+    trimmedBody = trimmedBody.slice(0, budget - 1).trimEnd();
+    // Avoid cutting mid-word when a reasonable word boundary is available.
+    const lastSpace = trimmedBody.lastIndexOf(" ");
+    if (lastSpace > budget * 0.6) trimmedBody = trimmedBody.slice(0, lastSpace).trimEnd();
+    trimmedBody = `${trimmedBody}…`;
+  }
+
+  const result = `${trimmedBody}${trimmedBody ? " " : ""}${disclaimer}`.trim();
+  return result.length <= limit ? result : result.slice(0, limit);
 }

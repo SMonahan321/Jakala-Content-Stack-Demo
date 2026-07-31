@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { BRAND_KIT } from "@/lib/brandkit";
 import {
   getBlogPost,
   getChannelVariantsForBlog,
@@ -520,12 +521,23 @@ function ImageSlot({
   );
 }
 
-function CharCount({ count, limit }: { count: number; limit?: number }) {
-  const over = limit ? count > limit : false;
+/**
+ * Per-card character counter. `maxChars` comes from `BRAND_KIT.channelStyle` (the single
+ * source of truth for channel limits) so tweaking a limit there updates every card. When
+ * the copy is over the channel limit the count turns red and an "over limit" note appears.
+ */
+function CharCount({ count, channel }: { count: number; channel: Channel }) {
+  const limit = BRAND_KIT.channelStyle[channel].maxChars;
+  const over = count > limit;
   return (
-    <span style={{ color: over ? "#e0245e" : "#8a95a5", fontSize: 12 }}>
-      {count}
-      {limit ? ` / ${limit}` : ""} chars
+    <span
+      style={{
+        color: over ? "#e0245e" : "#8a95a5",
+        fontSize: 12,
+        fontWeight: over ? 700 : 400,
+      }}
+    >
+      {count} / {limit} chars{over ? " · over limit" : ""}
     </span>
   );
 }
@@ -584,7 +596,7 @@ function LinkedInCard({ variant, imageUrl }: { variant: ChannelVariant; imageUrl
         }}
       >
         <span>👍 Like · 💬 Comment · ↪ Share</span>
-        <CharCount count={variant.charCount} />
+        <CharCount count={variant.charCount} channel="linkedin" />
       </div>
     </div>
   );
@@ -639,7 +651,7 @@ function XCard({ variant, imageUrl }: { variant: ChannelVariant; imageUrl?: stri
             }}
           >
             <span>💬 4 · 🔁 12 · ♥ 88</span>
-            <CharCount count={variant.charCount} limit={280} />
+            <CharCount count={variant.charCount} channel="x" />
           </div>
         </div>
       </div>
@@ -688,7 +700,7 @@ function InstagramCard({ variant, imageUrl }: { variant: ChannelVariant; imageUr
         <strong>cascaderegionalhealth</strong> {variant.formattedText}
         <Hashtags tags={variant.hashtags} color="#00376b" />
         <div style={{ marginTop: 8 }}>
-          <CharCount count={variant.charCount} />
+          <CharCount count={variant.charCount} channel="instagram" />
         </div>
       </div>
     </div>

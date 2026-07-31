@@ -28,7 +28,7 @@
 import { generateObject } from "ai";
 import { z } from "zod";
 
-import { BRAND_KIT, requiredDisclaimer } from "./brandkit";
+import { BRAND_KIT, conciseDisclaimer, requiredDisclaimer } from "./brandkit";
 import type { BlogPost, Channel, Locale, ChannelVariant } from "./types";
 
 /* ── Reasoning contracts ─────────────────────────────────────────────────── */
@@ -236,6 +236,33 @@ function transcreateSystemPrompt(): string {
 }
 
 /**
+ * HARD char-limit rules for a transcreation prompt. The post copy — INCLUDING the
+ * disclaimer AND hashtags — MUST fit within each channel's `maxChars` (from
+ * `BRAND_KIT.channelStyle`, the single source of truth). Never drop the disclaimer to
+ * save space: on tight channels (X = 280) instruct the model to use a CONCISE disclaimer
+ * that STILL contains the locale's core recognizable phrase, so it stays both valid and
+ * detectable by the fact-checker. Accepts one or more channels (matrix prompt).
+ */
+function charLimitRules(...channels: Channel[]): string {
+  const lines = [`HARD CHARACTER LIMIT (non-negotiable):`];
+  for (const channel of channels) {
+    lines.push(
+      `- Channel "${channel}": the ENTIRE post copy INCLUDING the disclaimer AND hashtags MUST be at most ` +
+        `${BRAND_KIT.channelStyle[channel].maxChars} characters. Count the characters and stay under the limit.`,
+    );
+  }
+  lines.push(
+    `- NEVER drop or omit the required disclaimer to save space. If the full disclaimer will not fit,`,
+    `  use a CONCISE disclaimer that STILL contains the locale's core recognizable phrase:`,
+    `    en: "${conciseDisclaimer("en")}"  (must contain "not medical advice")`,
+    `    es: "${conciseDisclaimer("es")}"  (must contain "no consejo médico")`,
+    `    fr: "${conciseDisclaimer("fr")}"  (must contain "non un avis médical")`,
+    `- To fit, trim BODY wording (never the disclaimer). Keep the key audience/benefit and at least one hashtag.`,
+  );
+  return lines.join("\n");
+}
+
+/**
  * Prompt for a BATCHED transcreation: one channel, all requested locales in a single
  * response. Each locale is transcreated independently (tone/culture-adapted, disclaimer
  * included) — quality-equivalent to the old per-locale calls, but in one Gateway round-trip.
@@ -266,6 +293,8 @@ function buildChannelTranscreatePrompt(
     `TARGET CHANNEL: ${channel}`,
     `Channel style: ${style.notes}`,
     `Max characters: ${style.maxChars}. Hashtags: between ${style.hashtagCount[0]} and ${style.hashtagCount[1]}.`,
+    ``,
+    charLimitRules(channel),
     ``,
     `PRESERVE the source's key audience and material benefits — most importantly, if the source`,
     `says the content helps older/elderly community members, EVERY locale's post must convey that`,
@@ -357,6 +386,8 @@ function buildMatrixTranscreatePrompt(
     ``,
     `Produce a SEPARATE, independently transcreated post for EVERY combination of the`,
     `following channels and locales.`,
+    ``,
+    charLimitRules(...channels),
     ``,
     `PRESERVE the source's key audience and material benefits in EVERY cell — most importantly,`,
     `if the source says the content helps older/elderly community members, every channel × locale`,

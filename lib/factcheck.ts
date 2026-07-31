@@ -11,7 +11,7 @@
  * pass/flag gating stay HERE: governance is owned by our orchestrator, not the model.
  */
 
-import { requiredDisclaimer } from "./brandkit";
+import { DISCLAIMER_CORE_PHRASE, requiredDisclaimer } from "./brandkit";
 import { getReasoningService, type FactCheckReasoning } from "./eve";
 import type { BlogPost, ChannelVariant, FactCheckResult } from "./types";
 
@@ -27,18 +27,32 @@ function normalize(s: string): string {
 
 /**
  * Heuristic disclaimer presence check: looks for a distinctive fragment of the
- * required disclaimer rather than an exact string (the agent may reword slightly).
+ * required disclaimer rather than an exact string (the agent may reword slightly, and
+ * tight channels like X carry an abbreviated form).
+ *
+ * The per-locale signals are intentionally BROAD so a valid abbreviated/channel-
+ * constrained disclaimer is recognized (e.g. the Spanish short form "Información general,
+ * no consejo médico." — note NO "un"). The locale's CORE phrase ("medical advice" /
+ * "consejo medico" / "avis medical") is the primary signal and, being accent-insensitive
+ * and prefix-free, matches both the full and abbreviated wordings; the remaining phrases
+ * cover other faithful equivalents. A genuinely empty/absent disclaimer matches none and
+ * still fails. Accent handling comes from `normalize()`.
  */
 export function hasRequiredDisclaimer(variant: ChannelVariant): boolean {
   const disclaimer = requiredDisclaimer(variant.locale);
   const haystack = normalize(variant.formattedText);
-  // Distinctive phrases per locale that signal the disclaimer intent.
+  const core = DISCLAIMER_CORE_PHRASE[variant.locale];
+  // Distinctive phrases per locale that signal the disclaimer intent. The core phrase is
+  // listed first; the rest are accepted faithful equivalents.
   const signals: Record<string, string[]> = {
-    en: ["not medical advice", "health care provider", "talk to your"],
-    es: ["no un consejo medico", "proveedor de salud", "consulte"],
-    fr: ["non un avis medical", "professionnel de sante", "consultez"],
+    // "medical advice" matches with or without a preceding "not".
+    en: [core, "health care provider", "healthcare provider", "talk to your"],
+    // "consejo medico" matches with or without "un" (e.g. "no consejo médico").
+    es: [core, "proveedor de salud", "consulte", "informacion general"],
+    // "avis medical" matches with or without "non un".
+    fr: [core, "professionnel de sante", "consultez"],
   };
-  const localeSignals = signals[variant.locale] ?? [];
+  const localeSignals = signals[variant.locale] ?? [core];
   const signalHit = localeSignals.some((sig) => haystack.includes(normalize(sig)));
   const exactish = haystack.includes(normalize(disclaimer).slice(0, 25));
   return signalHit || exactish;

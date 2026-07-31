@@ -95,3 +95,34 @@ export const BRAND_KIT: BrandKit = {
 export function requiredDisclaimer(locale: Locale): string {
   return BRAND_KIT.compliance.requiredDisclaimer[locale];
 }
+
+/**
+ * Concise, channel-constrained disclaimer per locale. Used when a tight channel
+ * (e.g. X, 280 chars) cannot fit the full disclaimer: it is deliberately short but
+ * STILL contains the locale's core recognizable phrase (see `DISCLAIMER_CORE_PHRASE`)
+ * so the fact-checker recognizes it. Never drop the disclaimer to save space — swap in
+ * this form instead. Single source of truth shared by the generation prompts (`lib/eve.ts`)
+ * and the deterministic char-limit guardrail (`lib/agent.ts`).
+ */
+export const CONCISE_DISCLAIMER: Record<Locale, string> = {
+  en: "This is general info, not medical advice.",
+  es: "Información general, no consejo médico.",
+  fr: "Information générale, non un avis médical.",
+};
+
+/** Convenience: the concise disclaimer for a given locale. */
+export function conciseDisclaimer(locale: Locale): string {
+  return CONCISE_DISCLAIMER[locale];
+}
+
+/**
+ * Accent-insensitive CORE phrase that a disclaimer MUST contain to count as present.
+ * Both the full and the concise disclaimers above contain it, so an abbreviated,
+ * channel-constrained disclaimer is still detectable while genuinely-missing copy fails.
+ * Shared by the loose detector (`lib/factcheck.ts`) and the char-limit guardrail.
+ */
+export const DISCLAIMER_CORE_PHRASE: Record<Locale, string> = {
+  en: "medical advice",
+  es: "consejo medico",
+  fr: "avis medical",
+};
