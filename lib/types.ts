@@ -38,6 +38,13 @@ export interface BlogPost {
    * once the asset is populated (see `mapFeaturedImage`/`getBlogPost`).
    */
   featuredImage?: { uid: string; url?: string; title?: string };
+  /**
+   * DEMO ONLY. When true, transcreation skips the claim-compliance guardrails so the
+   * source's claims (including egregiously false "cure"/guarantee claims) carry through
+   * VERBATIM and the still-strict fact-checker can flag them. Absent/false on real
+   * content → full compliance as normal. Isolated per-post; see `getBlogPost`.
+   */
+  demoBypassCompliance?: boolean;
 }
 
 /** Spec for how a channel wants its hero image cropped (mock — no real image ops). */

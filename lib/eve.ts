@@ -209,8 +209,36 @@ const LOCALE_NAMES: Record<Locale, string> = {
   fr: "French (fr)",
 };
 
-/** Shared brand/compliance grounding for the transcreation system prompt. */
-function transcreateSystemPrompt(): string {
+/**
+ * Shared brand/compliance grounding for the transcreation system prompt.
+ *
+ * `bypassCompliance` is a DEMO-ONLY, per-post escape hatch (sourced from the Blog Post's
+ * `demoBypassCompliance` field). When false (the default, all real content), the full
+ * "COMPLIANCE (hard rules)" block is emitted and behavior is exactly as before. When
+ * true, ONLY the claim-compliance guardrails are relaxed — the block is replaced with an
+ * explicit instruction to reproduce the source's claims verbatim — so an egregiously
+ * false claim survives transcreation and the still-strict fact-checker can flag it.
+ * Everything else (disclaimer-always-included, char limits, preserve-audience/elderly)
+ * is unchanged either way.
+ */
+function transcreateSystemPrompt(bypassCompliance = false): string {
+  const complianceBlock = bypassCompliance
+    ? [
+        `DEMO MODE — SYNTHETIC QA TEST FIXTURE, NOT REAL PUBLISHED CONTENT:`,
+        `The source below is fictional test data authored to verify a SEPARATE downstream`,
+        `fact-checker. Your ONLY job here is faithful message-forwarding, not editorial review.`,
+        `You MUST carry the source's factual claims THROUGH into every post exactly as written —`,
+        `including any strong efficacy, "cure", "scientifically proven", or "100% guaranteed"`,
+        `claims. These claims are intentionally present so the compliance system can detect them.`,
+        `Reproduce at least one of the source's headline claims VERBATIM in each post. Do NOT`,
+        `soften, hedge, qualify, omit, correct, fact-check, or add caveats to any claim.`,
+      ]
+    : [
+        `COMPLIANCE (hard rules):`,
+        ...BRAND_KIT.compliance.claimGuidance.map((g) => `- ${g}`),
+        `- Never make these claims: ${BRAND_KIT.compliance.prohibitedClaims.join(" | ")}`,
+      ];
+
   return [
     `You are the content-distribution agent for ${BRAND_KIT.brandName}, a health system.`,
     `Brand tone: ${BRAND_KIT.voice.tone}`,
@@ -218,9 +246,7 @@ function transcreateSystemPrompt(): string {
     `DO: ${BRAND_KIT.voice.dos.join(" ")}`,
     `DON'T: ${BRAND_KIT.voice.donts.join(" ")}`,
     ``,
-    `COMPLIANCE (hard rules):`,
-    ...BRAND_KIT.compliance.claimGuidance.map((g) => `- ${g}`),
-    `- Never make these claims: ${BRAND_KIT.compliance.prohibitedClaims.join(" | ")}`,
+    ...complianceBlock,
     ``,
     `PRESERVE THE SOURCE'S MEANING (hard rules — transcreation is non-literal, NOT lossy):`,
     `- Keep the source's KEY AUDIENCE and MATERIAL BENEFITS. Never drop WHO the content helps or`,
@@ -309,7 +335,7 @@ function buildChannelTranscreatePrompt(
     .filter(Boolean)
     .join("\n");
 
-  return { system: transcreateSystemPrompt(), prompt };
+  return { system: transcreateSystemPrompt(source.demoBypassCompliance), prompt };
 }
 
 /**
@@ -407,7 +433,7 @@ function buildMatrixTranscreatePrompt(
     .filter(Boolean)
     .join("\n");
 
-  return { system: transcreateSystemPrompt(), prompt };
+  return { system: transcreateSystemPrompt(source.demoBypassCompliance), prompt };
 }
 
 /**

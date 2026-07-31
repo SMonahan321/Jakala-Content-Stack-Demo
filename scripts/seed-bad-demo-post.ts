@@ -12,6 +12,13 @@
  * the flag. The disclaimer is present (via `requiredDisclaimer("en")`) precisely so
  * the flag is driven by the CLAIM, not by a missing disclaimer.
  *
+ * Crucially, this entry also sets `demo_bypass_compliance: true`. Without it the
+ * compliance-instructed transcreator SANITIZES the false claim before the fact-checker
+ * ever sees it (0 flags). The flag relaxes ONLY the claim-compliance guardrails in
+ * transcreation for THIS post, so the bad claim carries through verbatim and the
+ * still-strict fact-checker catches it — with zero manual editing. It is isolated to
+ * this post; all real content (flag absent/false) keeps full guardrails.
+ *
  * Idempotent by exact title: if a Blog Post with the same title already exists it is
  * UPDATED in place (so re-running never duplicates); otherwise a new entry is
  * created. Like the Lyme / Burnout seeds, this script deliberately does NOT publish —
@@ -109,6 +116,10 @@ async function main(): Promise<void> {
     summary: SUMMARY,
     body: BODY,
     key_claims: KEY_CLAIMS,
+    // DEMO ONLY: bypass claim-compliance in transcreation so the false "cure"/guarantee
+    // claim carries through verbatim and the (still-strict) fact-checker flags it. This
+    // is what lets the demo work with ZERO manual editing. Never enable on real content.
+    demo_bypass_compliance: true,
   };
 
   // Idempotency: find an existing Blog Post with the same title and UPDATE it in

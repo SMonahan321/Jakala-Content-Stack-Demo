@@ -12,7 +12,12 @@ Management API content-type shape and can be created in three ways.
 ## Fields at a glance
 
 **Blog Post (`blog_post`)**: `title`, `summary`, `body`, `key_claims[]`,
-`featured_image` (file / single asset).
+`featured_image` (file / single asset), `demo_bypass_compliance` (boolean).
+
+- `demo_bypass_compliance` — `data_type: "boolean"`, optional (`mandatory: false`).
+  **DEMO ONLY.** When `true`, transcreation carries the source's claims verbatim
+  (skipping the claim-compliance guardrails) so the still-strict fact-checker flags
+  them. Never enable on real content; absent/false means full compliance as normal.
 
 - `featured_image` — `data_type: "file"`, `multiple: false` (a single Contentstack
   asset). Optional (`mandatory: false`). It's the hero image for the post and the

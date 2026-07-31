@@ -125,6 +125,7 @@ export async function getBlogPost(uid: string, locale: Locale = "en"): Promise<B
     summary: entry.summary,
     keyClaims: entry.key_claims,
     featuredImage,
+    demoBypassCompliance: Boolean(entry.demo_bypass_compliance),
   };
 }
 
@@ -613,6 +614,8 @@ interface RawBlogEntry {
   key_claims?: string[];
   /** File field: a resolved asset object (with `url`/`title`) or a bare asset uid. */
   featured_image?: string | { uid?: string; url?: string; title?: string } | null;
+  /** DEMO ONLY boolean: bypass claim-compliance in transcreation (see BlogPost). */
+  demo_bypass_compliance?: boolean | null;
 }
 
 /** An entry handle we can mutate + update (subset of the SDK Entry). */

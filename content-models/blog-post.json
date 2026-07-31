@@ -53,6 +53,15 @@
           "description": "Hero image for the post; source asset for channel image-crop specs.",
           "rich_text_type": "standard"
         }
+      },
+      {
+        "display_name": "Demo: Bypass Compliance",
+        "uid": "demo_bypass_compliance",
+        "data_type": "boolean",
+        "mandatory": false,
+        "field_metadata": {
+          "description": "DEMO ONLY — when true, transcreation carries source claims verbatim so the fact-checker can flag them. Never enable on real content."
+        }
       }
     ]
   }
