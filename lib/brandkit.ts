@@ -51,16 +51,16 @@ export const BRAND_KIT: BrandKit = {
   },
   compliance: {
     requiredDisclaimer: {
-      en: "This is general information, not medical advice. Talk to your health care provider about the flu vaccine.",
-      es: "Esta es información general, no un consejo médico. Consulte a su proveedor de salud sobre la vacuna contra la influenza.",
-      fr: "Ceci est une information générale et non un avis médical. Consultez votre professionnel de santé au sujet du vaccin antigrippal.",
+      en: "This is general information, not medical advice. Talk to your health care provider about your health.",
+      es: "Esta es información general, no un consejo médico. Consulte a su proveedor de salud.",
+      fr: "Ceci est une information générale et non un avis médical. Consultez votre professionnel de santé.",
     },
     prohibitedClaims: [
-      "The flu vaccine is 100% effective / guarantees you will not get the flu.",
-      "The flu vaccine can give you the flu.",
-      "The flu vaccine cures or treats an active flu infection.",
-      "Any specific efficacy percentage not present in the source blog.",
-      "Claims that the vaccine is required by law.",
+      "Guarantees of 100% effectiveness or that a treatment/vaccine prevents all illness.",
+      "Any specific efficacy percentage or statistic not present in the source blog.",
+      "Claims that a treatment or vaccine cures or treats a condition beyond what the source states.",
+      "Claims that a treatment or vaccine is required by law.",
+      "Invented study citations or scientific claims not supported by the source.",
     ],
     claimGuidance: [
       "Only state medical facts that are explicitly supported by the source blog post.",
