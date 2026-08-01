@@ -19,6 +19,8 @@
  * Slack is intentionally NOT called here — that fires only on human approval.
  */
 
+import { createHash } from "node:crypto";
+
 import { transcreateAll } from "./agent";
 import { applyFactCheck, factCheckAll } from "./factcheck";
 import {
@@ -26,7 +28,45 @@ import {
   persistChannelAcrossLocales,
   setBlogWorkflowStage,
 } from "./contentstack";
-import { CHANNELS, type BlogPost, type Channel, type ChannelVariant } from "./types";
+import {
+  CHANNELS,
+  type BlogPost,
+  type Channel,
+  type ChannelVariant,
+  type FactCheckResult,
+} from "./types";
+
+/**
+ * Best-effort in-process memo of the reasoning result (transcreation + fact-check), keyed by a
+ * hash of the SOURCE content. On repeat publishes of an UNCHANGED post — common when a live demo
+ * hits "publish" more than once — this reuses the reasoning and SKIPS BOTH Vercel AI Gateway calls,
+ * so we don't re-spend the rate-limit budget. It only lives for the lifetime of a warm serverless
+ * instance and self-invalidates whenever the source content (or model) changes (hash miss) or the
+ * entry ages past `PIPELINE_CACHE_TTL_MS`. Deterministic governance + the CMS write still run every
+ * time, so behavior is identical to a cold run — just without the redundant model calls.
+ */
+interface ReasoningMemoEntry {
+  generated: ChannelVariant[];
+  results: FactCheckResult[];
+  at: number;
+}
+const reasoningMemo = new Map<string, ReasoningMemoEntry>();
+
+function sourceContentHash(source: BlogPost): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        title: source.title,
+        summary: source.summary ?? "",
+        body: source.body,
+        keyClaims: source.keyClaims ?? [],
+        bypass: source.demoBypassCompliance ?? false,
+        model: process.env.AI_MODEL ?? "openai/gpt-4o",
+        channels: CHANNELS,
+      }),
+    )
+    .digest("hex");
+}
 
 export interface PipelineResult {
   sourceUid: string;
@@ -48,12 +88,29 @@ export async function runPipeline(entryUid: string): Promise<PipelineResult> {
   // 1. Read the source Blog Post in the logical master locale ("en" → stack master).
   const source: BlogPost = await getBlogPost(entryUid, "en");
 
-  // 2. Transcreate the full channel × locale matrix in ONE batched Gateway call.
-  const generated: ChannelVariant[] = await transcreateAll(source);
+  // 2 + 3. Transcreate the full matrix (ONE batched Gateway call) then fact-check every
+  //    variant (ONE batched Gateway call). On a repeat publish of an UNCHANGED source seen
+  //    on this warm instance, reuse the memoized reasoning and skip BOTH Gateway calls — the
+  //    single biggest no-cost safeguard against re-hitting the free-tier rate limit.
+  const cacheTtlMs = Number(process.env.PIPELINE_CACHE_TTL_MS ?? 10 * 60 * 1000);
+  const cacheKey = sourceContentHash(source);
+  const cached = reasoningMemo.get(cacheKey);
 
-  // 3. Fact-check every variant in ONE batched Gateway call; the deterministic disclaimer
-  //    backstop + pass/flag gating still run per variant. Failures are auto-flagged.
-  const results = await factCheckAll(source, generated);
+  let generated: ChannelVariant[];
+  let results: FactCheckResult[];
+  if (cached && Date.now() - cached.at <= cacheTtlMs) {
+    console.warn(
+      "[pipeline] unchanged source; reusing cached transcreation + fact-check and skipping both Gateway calls.",
+    );
+    generated = cached.generated;
+    results = cached.results;
+  } else {
+    generated = await transcreateAll(source);
+    results = await factCheckAll(source, generated);
+    reasoningMemo.set(cacheKey, { generated, results, at: Date.now() });
+  }
+
+  // Deterministic disclaimer backstop + pass/flag gating always run per variant.
   const reviewed: ChannelVariant[] = generated.map((variant, i) =>
     applyFactCheck(variant, results[i]),
   );

@@ -489,29 +489,75 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** True when an error looks like a provider/gateway rate-limit (free-tier throttling). */
 function isRateLimitError(err: unknown): boolean {
-  const msg = (err as Error)?.message ?? String(err);
-  return /rate.?limit|429|too many requests/i.test(msg);
+  const anyErr = err as { statusCode?: number; status?: number; name?: string; message?: string };
+  if (anyErr?.statusCode === 429 || anyErr?.status === 429) return true;
+  if (/rate.?limit/i.test(anyErr?.name ?? "")) return true;
+  const msg = anyErr?.message ?? String(err);
+  return /rate.?limit|429|too many requests|quota/i.test(msg);
 }
 
 /**
- * Run a reasoning call with rate-limit-aware retry. The AI SDK already retries a few
- * times quickly; free-tier gateway limits need LONGER, spaced-out waits, so we back off
- * up to a handful of times before giving up. Tunable via `AI_RATELIMIT_MAX_RETRIES`.
+ * Best-effort extraction of a server-suggested wait (ms) from a rate-limit error: honors a
+ * `Retry-After` header (seconds or HTTP date) or a numeric `retryAfter` hint if the SDK/
+ * Gateway surfaced one. Returns undefined when nothing usable is present.
+ */
+function retryAfterMs(err: unknown): number | undefined {
+  const anyErr = err as {
+    responseHeaders?: Record<string, string | undefined>;
+    headers?: Record<string, string | undefined>;
+    retryAfter?: number;
+  };
+  const headers = anyErr?.responseHeaders ?? anyErr?.headers;
+  const raw = headers?.["retry-after"] ?? headers?.["Retry-After"];
+  if (raw) {
+    const asSeconds = Number(raw);
+    if (Number.isFinite(asSeconds)) return Math.max(0, asSeconds * 1000);
+    const asDate = Date.parse(raw);
+    if (Number.isFinite(asDate)) return Math.max(0, asDate - Date.now());
+  }
+  if (typeof anyErr?.retryAfter === "number") return Math.max(0, anyErr.retryAfter * 1000);
+  return undefined;
+}
+
+/**
+ * Run a reasoning call with rate-limit-aware retry that RECOVERS instead of failing the run,
+ * while staying within the webhook's `maxDuration`. The AI SDK already retries a few times
+ * quickly; free-tier gateway limits need LONGER, spaced-out waits, so we back off (exponential
+ * + jitter, capped per attempt) and honor a server `Retry-After` when present. Crucially the
+ * *cumulative* wait per call is bounded by a budget so two sequential calls (transcreate +
+ * fact-check) still fit under the 300s function limit instead of being killed mid-backoff.
+ *
+ * Tunables (all read at runtime, so a redeploy picks them up):
+ *   AI_RATELIMIT_MAX_RETRIES (default 8)
+ *   AI_RATELIMIT_BASE_MS     (default 6000)   base for exponential backoff
+ *   AI_RATELIMIT_CAP_MS      (default 45000)  per-attempt wait cap
+ *   AI_RATELIMIT_BUDGET_MS   (default 120000) cumulative wait cap per call
  */
 async function withRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
-  const maxRetries = Number(process.env.AI_RATELIMIT_MAX_RETRIES ?? 6);
-  const baseDelayMs = Number(process.env.AI_RATELIMIT_BASE_MS ?? 12000);
+  const maxRetries = Number(process.env.AI_RATELIMIT_MAX_RETRIES ?? 8);
+  const baseDelayMs = Number(process.env.AI_RATELIMIT_BASE_MS ?? 6000);
+  const capMs = Number(process.env.AI_RATELIMIT_CAP_MS ?? 45000);
+  const budgetMs = Number(process.env.AI_RATELIMIT_BUDGET_MS ?? 120000);
   let attempt = 0;
+  let spentMs = 0;
   for (;;) {
     try {
       return await fn();
     } catch (err) {
       if (!isRateLimitError(err) || attempt >= maxRetries) throw err;
-      const waitMs = baseDelayMs * (attempt + 1);
+      const expo = Math.min(capMs, baseDelayMs * 2 ** attempt);
+      const jitter = Math.round(Math.random() * baseDelayMs);
+      const waitMs = Math.min(retryAfterMs(err) ?? expo + jitter, capMs);
+      // Stop retrying if the next wait would blow the per-call time budget — better to
+      // surface the error cleanly than to be killed by the function timeout mid-backoff.
+      if (spentMs + waitMs > budgetMs) throw err;
       console.warn(
-        `[reasoning] rate-limited; backing off ${Math.round(waitMs / 1000)}s (retry ${attempt + 1}/${maxRetries})`,
+        `[reasoning] Vercel AI Gateway rate-limit hit; waiting ${Math.round(waitMs / 1000)}s then ` +
+          `retrying (attempt ${attempt + 1}/${maxRetries}, ` +
+          `${Math.round((spentMs + waitMs) / 1000)}s/${Math.round(budgetMs / 1000)}s wait budget).`,
       );
       await sleep(waitMs);
+      spentMs += waitMs;
       attempt++;
     }
   }

@@ -49,8 +49,12 @@ export function buildTargetMatrix(): Target[] {
   return targets;
 }
 
-/** Optional spacing between provider calls to stay under free-tier rate limits. */
-const THROTTLE_MS = Number(process.env.AI_THROTTLE_MS ?? 0);
+/**
+ * Optional spacing between provider calls to stay under free-tier rate limits. Applied
+ * AFTER the transcreation call so the follow-up fact-check call doesn't land back-to-back
+ * against the Gateway limiter. Defaults to a small 750ms gap; raise via `AI_THROTTLE_MS`.
+ */
+const THROTTLE_MS = Number(process.env.AI_THROTTLE_MS ?? 750);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
